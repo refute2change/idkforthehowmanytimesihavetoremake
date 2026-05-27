@@ -1,11 +1,27 @@
 // app/components/ConnectionManager.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router'; // Import the router navigate hook
 import { useSocket } from './SocketContext';
 
 export function ConnectionManager() {
   const { isConnected, currentRoom, connectSocket, disconnectSocket } = useSocket();
   const [selectedRole, setSelectedRole] = useState<'host-server' | 'regular-client'>('regular-client');
   const [hostKey, setHostKey] = useState('');
+  
+  const navigate = useNavigate(); // Initialize the navigator
+
+  // 1. WATCH FOR SUCCESSFUL CONNECTION TO REDIRECT
+  useEffect(() => {
+    if (isConnected && currentRoom) {
+      if (selectedRole === 'host-server') {
+        // Automatically redirect to the host dashboard route
+        navigate('/host');
+      } else if (selectedRole === 'regular-client') {
+        // You can redirect regular clients to a separate view if you want!
+        navigate('/connect'); 
+      }
+    }
+  }, [isConnected, currentRoom, selectedRole, navigate]);
 
   const handleConnect = () => {
     if (!hostKey.trim()) {
@@ -51,7 +67,7 @@ export function ConnectionManager() {
 
       <div style={{ display: 'flex', gap: '10px' }}>
         <button onClick={handleConnect} disabled={isConnected} style={{ flex: 1, backgroundColor: isConnected ? '#555' : '#4CAF50', color: 'white', padding: '10px', border: 'none', borderRadius: '4px', cursor: isConnected ? 'not-allowed' : 'pointer' }}>
-          {selectedRole === 'host-server' ? 'Host & Connect' : 'Connect to Room'}
+          {selectedRole === 'regular-client' ? 'Connect' : 'Initialize'}
         </button>
         <button onClick={disconnectSocket} disabled={!isConnected} style={{ flex: 1, backgroundColor: !isConnected ? '#555' : '#f44336', color: 'white', padding: '10px', border: 'none', borderRadius: '4px', cursor: !isConnected ? 'not-allowed' : 'pointer' }}>
           Disconnect
