@@ -24,12 +24,18 @@ export default function ClientView() {
       setHostReply(payload);
     }
 
+    function handleOpenRound2() {
+      navigate('/play/round2');
+    }
+
     socket.on('host-signal', handleHostSignal);
+    socket.on('open-round2', handleOpenRound2);
 
     return () => {
       socket.off('host-signal', handleHostSignal);
+      socket.off('open-round2', handleOpenRound2);
     };
-  }, [isConnected]);
+  }, [isConnected, navigate]);
 
   // Action function to send data straight up to the active host room
   const sendSignalToHost = () => {
@@ -54,12 +60,20 @@ export default function ClientView() {
     <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>👤 Standard Client Panel</h1>
-        <button 
-          onClick={handleLeaveRoom} 
-          style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}
-        >
-          Leave Room
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button 
+            onClick={() => navigate('/play/round2')} 
+            style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            Join Round2 Game
+          </button>
+          <button 
+            onClick={handleLeaveRoom} 
+            style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            Leave Room
+          </button>
+        </div>
       </div>
 
       <p>Connected to Host Room: <span style={{ color: '#4CAF50', fontFamily: 'monospace', fontSize: '1.2em' }}>{currentRoom}</span></p>

@@ -3,9 +3,14 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router'; // Import the router navigate hook
 import { useSocket } from './SocketContext';
 
-export function ConnectionManager() {
+interface ConnectionManagerProps {
+  selectedRole: 'host-server' | 'regular-client';
+  onRoleChange: (role: 'host-server' | 'regular-client') => void;
+  clientName: string;
+}
+
+export function ConnectionManager({ selectedRole, onRoleChange, clientName }: ConnectionManagerProps) {
   const { isConnected, currentRoom, connectSocket, disconnectSocket } = useSocket();
-  const [selectedRole, setSelectedRole] = useState<'host-server' | 'regular-client'>('regular-client');
   const [hostKey, setHostKey] = useState('');
   
   const navigate = useNavigate(); // Initialize the navigator
@@ -18,7 +23,7 @@ export function ConnectionManager() {
         navigate('/host');
       } else if (selectedRole === 'regular-client') {
         // You can redirect regular clients to a separate view if you want!
-        navigate('/connect'); 
+        navigate('/play'); 
       }
     }
   }, [isConnected, currentRoom, selectedRole, navigate]);
@@ -28,7 +33,13 @@ export function ConnectionManager() {
       alert('Please enter a Host Server / Room ID key!');
       return;
     }
-    connectSocket(selectedRole, hostKey.trim());
+
+    if (selectedRole === 'regular-client' && !clientName.trim()) {
+      alert('Please enter your name to connect as a client.');
+      return;
+    }
+
+    connectSocket(selectedRole, hostKey.trim(), selectedRole === 'regular-client' ? clientName.trim() : undefined);
   };
 
   return (
@@ -56,7 +67,7 @@ export function ConnectionManager() {
         <label style={{ display: 'block', marginBottom: '5px' }}>2. Choose Identity:</label>
         <select
           value={selectedRole}
-          onChange={(e) => setSelectedRole(e.target.value as 'host-server' | 'regular-client')}
+          onChange={(e) => onRoleChange(e.target.value as 'host-server' | 'regular-client')}
           disabled={isConnected}
           style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #555', backgroundColor: '#2d2d2d', color: '#fff' }}
         >

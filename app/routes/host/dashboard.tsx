@@ -4,8 +4,13 @@ import { useNavigate } from 'react-router';
 import { useSocket } from '../../components/SocketContext';
 import { socket } from '../../socket';
 
+interface ConnectedClient {
+  id: string;
+  name: string;
+}
+
 export default function HostDashboard() {
-  const { isConnected, currentRoom, disconnectSocket } = useSocket();
+  const { isConnected, currentRoom, disconnectSocket, connectedClients } = useSocket();
   const [incomingSignals, setIncomingSignals] = useState<any[]>([]);
   const navigate = useNavigate();
 
@@ -16,18 +21,16 @@ export default function HostDashboard() {
     }
   }, [isConnected, currentRoom, navigate]);
 
-  // 2. LISTEN FOR LIVE PEER DATA
+  // 2. LISTEN FOR LIVE PEER SIGNALS
   useEffect(() => {
-    // Only register listeners if we are actually connected
     if (!isConnected) return;
 
     function handleClientSignal(data: any) {
-      setIncomingSignals(prev => [...prev, data]);
-      
-      // Automated response back to peer
+      setIncomingSignals((prev) => [...prev, data]);
+
       socket.emit('message-from-host', {
         targetClientId: data.senderId,
-        payload: `Host processed your message at ${new Date().toLocaleTimeString()}`
+        payload: `Host processed your message at ${new Date().toLocaleTimeString()}`,
       });
     }
 
@@ -52,13 +55,52 @@ export default function HostDashboard() {
     <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>👑 Host Server Workspace</h1>
-        <button onClick={handleLeaveWorkspace} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
-          Close Workspace
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button onClick={() => {
+            socket.emit('open-round2', { hostKey: currentRoom });
+            navigate('/host/round2');
+          }} style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
+            Open Round2 Game
+          </button>
+          <button onClick={handleLeaveWorkspace} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
+            Close Workspace
+          </button>
+        </div>
       </div>
       
       <p>Active Room Key: <span style={{ color: '#4CAF50', fontFamily: 'monospace', fontSize: '1.2em' }}>{currentRoom}</span></p>
       
+      <hr style={{ borderColor: '#333', margin: '20px 0' }} />
+
+      <section style={{ marginBottom: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0 }}>Connected Clients</h3>
+          <span style={{ color: '#888' }}>{connectedClients.length} connected</span>
+        </div>
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {connectedClients.length === 0 ? (
+            <div style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', color: '#aaa' }}>
+              No clients are connected yet.
+            </div>
+          ) : (
+            connectedClients.map((client) => (
+              <div key={client.id} style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{client.name}</div>
+                  <div style={{ color: '#888', fontSize: '0.9rem' }}>{client.id}</div>
+                </div>
+                <button
+                  onClick={() => socket.emit('kick-client', { targetClientId: client.id })}
+                  style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  Kick
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
       <hr style={{ borderColor: '#333', margin: '20px 0' }} />
       
       <h3>Incoming Data Pipeline Logs:</h3>
