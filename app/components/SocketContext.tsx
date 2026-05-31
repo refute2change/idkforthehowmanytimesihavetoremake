@@ -115,12 +115,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
     function handleClientSignal(data: any) {
       if (role !== 'host-server') return;
-      if (data.senderId) {
-        addOrUpdateClient({
-          id: data.senderId,
-          name: data.clientName || `Client ${data.senderId.slice(0, 6)}`,
-        });
-      }
+      if (!data.senderId) return;
+      addOrUpdateClient({
+        id: data.senderId,
+        name: data.clientName || data.senderName || `Client ${data.senderId.slice(0, 6)}`,
+      });
     }
 
     socket.on('open-round2', handleOpenRound2);

@@ -28,12 +28,18 @@ export default function ClientView() {
       navigate('/play/round2');
     }
 
+    function handleOpenRound4() {
+      navigate('/play/round4');
+    }
+
     socket.on('host-signal', handleHostSignal);
     socket.on('open-round2', handleOpenRound2);
+    socket.on('open-round4', handleOpenRound4);
 
     return () => {
       socket.off('host-signal', handleHostSignal);
       socket.off('open-round2', handleOpenRound2);
+      socket.off('open-round4', handleOpenRound4);
     };
   }, [isConnected, navigate]);
 
@@ -66,6 +72,12 @@ export default function ClientView() {
             style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}
           >
             Join Round2 Game
+          </button>
+          <button 
+            onClick={() => navigate('/play/round4')} 
+            style={{ backgroundColor: '#8E24AA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            Join Round4 Game
           </button>
           <button 
             onClick={handleLeaveRoom} 

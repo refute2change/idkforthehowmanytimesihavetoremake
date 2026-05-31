@@ -12,6 +12,8 @@ interface ConnectedClient {
 export default function HostDashboard() {
   const { isConnected, currentRoom, disconnectSocket, connectedClients } = useSocket();
   const [incomingSignals, setIncomingSignals] = useState<any[]>([]);
+  const [playerPoints, setPlayerPoints] = useState<{ [playerId: string]: number }>({});
+  const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
   const navigate = useNavigate();
 
   // 1. SECURITY GUARD: Kick users out if they try to visit this page offline
@@ -41,6 +43,80 @@ export default function HostDashboard() {
     };
   }, [isConnected]);
 
+  useEffect(() => {
+    if (!isConnected || !currentRoom || connectedClients.length === 0) return;
+
+    connectedClients.forEach((client) => {
+      socket.emit('request-player-points', {
+        hostKey: currentRoom,
+        targetClientId: client.id,
+      });
+    });
+  }, [isConnected, currentRoom, connectedClients]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handlePlayerPointsResponse = (data: any) => {
+      if (data.playerId && typeof data.points === 'number') {
+        setPlayerPoints((prev) => ({
+          ...prev,
+          [data.playerId]: data.points,
+        }));
+      }
+    };
+
+    const handlePlayerPointsAwarded = (data: any) => {
+      if (data.playerId && typeof data.points === 'number') {
+        setPlayerPoints((prev) => ({
+          ...prev,
+          [data.playerId]: data.points,
+        }));
+      }
+    };
+
+    socket.on('player-points-response', handlePlayerPointsResponse);
+    socket.on('player-points-awarded', handlePlayerPointsAwarded);
+
+    return () => {
+      socket.off('player-points-response', handlePlayerPointsResponse);
+      socket.off('player-points-awarded', handlePlayerPointsAwarded);
+    };
+  }, [isConnected]);
+
+  const adjustPlayerPoints = (playerId: string, value: number, operation: 'set' | 'add') => {
+    if (!currentRoom) return;
+    socket.emit('adjust-player-points', {
+      hostKey: currentRoom,
+      targetClientId: playerId,
+      points: value,
+      operation,
+    });
+    setPlayerPoints((prev) => {
+      const current = prev[playerId] || 0;
+      const newTotal = operation === 'set' ? value : current + value;
+      return { ...prev, [playerId]: newTotal };
+    });
+  };
+
+  const handleManualPointsChange = (playerId: string, value: string) => {
+    setManualPoints((prev) => ({ ...prev, [playerId]: value }));
+  };
+
+  const handleSetPlayerPoints = (playerId: string) => {
+    const raw = manualPoints[playerId];
+    const newValue = Number(raw);
+    if (Number.isNaN(newValue)) return;
+    adjustPlayerPoints(playerId, newValue, 'set');
+  };
+
+  const handleAddPlayerPoints = (playerId: string) => {
+    const raw = manualPoints[playerId];
+    const delta = Number(raw);
+    if (Number.isNaN(delta)) return;
+    adjustPlayerPoints(playerId, delta, 'add');
+  };
+
   // A helper function so the admin can safely disconnect and go home
   const handleLeaveWorkspace = () => {
     disconnectSocket(); // This sets states to false/null, which automatically triggers our security guard useEffect to push us home
@@ -61,6 +137,12 @@ export default function HostDashboard() {
             navigate('/host/round2');
           }} style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
             Open Round2 Game
+          </button>
+          <button onClick={() => {
+            socket.emit('open-round4', { hostKey: currentRoom });
+            navigate('/host/round4');
+          }} style={{ backgroundColor: '#8E24AA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
+            Open Round4 Game
           </button>
           <button onClick={handleLeaveWorkspace} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
             Close Workspace
@@ -84,17 +166,43 @@ export default function HostDashboard() {
             </div>
           ) : (
             connectedClients.map((client) => (
-              <div key={client.id} style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{client.name}</div>
-                  <div style={{ color: '#888', fontSize: '0.9rem' }}>{client.id}</div>
+              <div key={client.id} style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', display: 'grid', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{client.name}</div>
+                    <div style={{ color: '#888', fontSize: '0.9rem' }}>{client.id}</div>
+                    <div style={{ color: '#4CAF50', fontSize: '0.95rem', marginTop: '4px' }}>
+                      {playerPoints[client.id] || 0} pts
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => socket.emit('kick-client', { targetClientId: client.id })}
+                    style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '6px', cursor: 'pointer' }}
+                  >
+                    Kick
+                  </button>
                 </div>
-                <button
-                  onClick={() => socket.emit('kick-client', { targetClientId: client.id })}
-                  style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '6px', cursor: 'pointer' }}
-                >
-                  Kick
-                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    value={manualPoints[client.id] ?? ''}
+                    onChange={(e) => handleManualPointsChange(client.id, e.target.value)}
+                    placeholder="+/- or set"
+                    style={{ width: '120px', padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#121212', color: '#fff' }}
+                  />
+                  <button
+                    onClick={() => handleAddPlayerPoints(client.id)}
+                    style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#4CAF50', color: '#fff', border: 'none', cursor: 'pointer' }}
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => handleSetPlayerPoints(client.id)}
+                    style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#FFA000', color: '#fff', border: 'none', cursor: 'pointer' }}
+                  >
+                    Set
+                  </button>
+                </div>
               </div>
             ))
           )}
