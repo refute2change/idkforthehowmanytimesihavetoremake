@@ -1,38 +1,93 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useSocket } from '../../../components/SocketContext';
 import { socket } from '../../../socket';
 
-interface Round4AnswerEntry {
+const PROTOTYPE_QUESTION_BANK = {
+  40: [
+    { points: 10, question: "What is the capital city of France?" },
+    { points: 10, question: "How many legs does a spider have?" },
+    { points: 20, question: "Which planet is known as the 'Red Planet'?" }
+  ],
+  60: [
+    { points: 10, question: "What gas do plants absorb from the atmosphere during photosynthesis?" },
+    { points: 20, question: "Who wrote the famous play 'Romeo and Juliet'?" },
+    { points: 30, question: "What is the chemical symbol for the element Gold?" }
+  ],
+  80: [
+    { points: 20, question: "What is the rarest naturally occurring element on Earth?" },
+    { points: 30, question: "Which mathematician is credited with creating the coordinate geometry system?" },
+    { points: 30, question: "In what year did the Berlin Wall come down?" }
+  ]
+};
+
+type PackValue = 40 | 60 | 80;
+
+interface PlayerAnswer {
   id: string;
   name: string;
   answer: string;
   time: string;
 }
 
-interface Round4StealAttempt {
+interface StealAttempt {
   id: string;
   name: string;
 }
 
 export default function HostRound4() {
   const { isConnected, currentRoom, disconnectSocket, connectedClients } = useSocket();
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [selectedPlayerName, setSelectedPlayerName] = useState<string>('');
-  const [packValue, setPackValue] = useState(40);
-  const [questionText, setQuestionText] = useState('');
-  const [roundActive, setRoundActive] = useState(false);
-  const [stealWindowOpen, setStealWindowOpen] = useState(false);
-  const [currentStealAttempt, setCurrentStealAttempt] = useState<Round4StealAttempt | null>(null);
-  const [answerLog, setAnswerLog] = useState<Round4AnswerEntry[]>([]);
-  const [actionLog, setActionLog] = useState<string[]>([]);
-  const [playerPoints, setPlayerPoints] = useState<{ [playerId: string]: number }>({});
-  const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
   const navigate = useNavigate();
 
-  const selectedPlayer = useMemo(() => {
-    return connectedClients.find((client) => client.id === selectedPlayerId) || null;
-  }, [connectedClients, selectedPlayerId]);
+  // Core Configuration States
+  const [activePlayerId, setActivePlayerId] = useState<string>('');
+  const [turnStaged, setTurnStaged] = useState<boolean>(false);
+  const [completedPlayerIds, setCompletedPlayerIds] = useState<{ [playerId: string]: boolean }>({});
+  const [selectedPack, setSelectedPack] = useState<PackValue | null>(null);
+  const [usedSubQuestions, setUsedSubQuestions] = useState<{ [key: number]: boolean }>({ 0: false, 1: false, 2: false });
+  const [currentSubQuestionIndex, setCurrentSubQuestionIndex] = useState<number | null>(null);
+  const [turnFullyFinished, setTurnFullyFinished] = useState<boolean>(false);
+
+  // Star of Hope Trackers
+  const [starOfHopeUsedByPlayer, setStarOfHopeUsedByPlayer] = useState<{ [playerId: string]: boolean }>({});
+  const [starOfHopeActiveThisQuestion, setStarOfHopeActiveThisQuestion] = useState<boolean>(false);
+
+  // Live Game Round Tracking States
+  const [questionPrompt, setQuestionPrompt] = useState<string>('');
+  const [questionSelected, setQuestionSelected] = useState<boolean>(false);
+  const [timerRunning, setTimerRunning] = useState<boolean>(false);
+  const [hostTimeLeft, setHostTimeLeft] = useState<number | null>(null);
+  
+  // Scoring Assessment & Steal States
+  const [playerAnswers, setPlayerAnswers] = useState<PlayerAnswer[]>([]);
+  const [stealWindowOpen, setStealWindowOpen] = useState<boolean>(false);
+  const [stealTimeLeft, setStealTimeLeft] = useState<number | null>(null);
+  const [currentStealAttempt, setCurrentStealAttempt] = useState<StealAttempt | null>(null);
+
+  const [playerPoints, setPlayerPoints] = useState<{ [playerId: string]: number }>({});
+  const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
+  
+  const mainTimerRef = useRef<number | null>(null);
+  const stealTimerRef = useRef<number | null>(null);
+
+  // Evaluates if every single connected player client has finished their pack turn run
+  const areAllPlayersFinished = useMemo(() => {
+    if (connectedClients.length === 0) return false;
+    return connectedClients.every(client => completedPlayerIds[client.id] === true);
+  }, [connectedClients, completedPlayerIds]);
+
+  // Derive points and dynamic answer duration for current sub-question
+  const currentSubQuestionPoints = useMemo(() => {
+    if (selectedPack === null || currentSubQuestionIndex === null) return 0;
+    return PROTOTYPE_QUESTION_BANK[selectedPack][currentSubQuestionIndex].points;
+  }, [selectedPack, currentSubQuestionIndex]);
+
+  const dynamicDuration = useMemo(() => {
+    if (currentSubQuestionPoints === 10) return 10;
+    if (currentSubQuestionPoints === 20) return 15;
+    if (currentSubQuestionPoints === 30) return 20;
+    return 15;
+  }, [currentSubQuestionPoints]);
 
   useEffect(() => {
     if (!isConnected || !currentRoom) {
@@ -40,11 +95,12 @@ export default function HostRound4() {
     }
   }, [isConnected, currentRoom, navigate]);
 
+  // WebSocket Event Handlers
   useEffect(() => {
     if (!isConnected) return;
 
     const handleRound4Answer = (data: any) => {
-      setAnswerLog((prev) => [
+      setPlayerAnswers((prev) => [
         {
           id: data.senderId,
           name: data.senderName || `Player ${data.senderId.slice(0, 6)}`,
@@ -53,25 +109,25 @@ export default function HostRound4() {
         },
         ...prev,
       ]);
-      setActionLog((prev) => [`${data.senderName || data.senderId} answered: ${data.answer}`, ...prev]);
     };
 
-    const handleStealFirst = (data: any) => {
-      if (!data) return;
-      setCurrentStealAttempt({ id: data.playerId, name: data.playerName });
-      setActionLog((prev) => [`Steal attempt by ${data.playerName}`, ...prev]);
-    };
+    const handleStealAttempt = (data: any) => {
+      setCurrentStealAttempt((current) => {
+        if (current !== null) return current;
+        
+        if (stealTimerRef.current) {
+          window.clearInterval(stealTimerRef.current);
+          stealTimerRef.current = null;
+        }
 
-    const handleStealWindowOpen = () => {
-      setStealWindowOpen(true);
-      setCurrentStealAttempt(null);
-      setActionLog((prev) => ['Steal window opened', ...prev]);
-    };
+        socket.emit('round4-steal-first', {
+          hostKey: currentRoom,
+          playerId: data.playerId,
+          playerName: data.playerName
+        });
 
-    const handleStealWindowClose = () => {
-      setStealWindowOpen(false);
-      setCurrentStealAttempt(null);
-      setActionLog((prev) => ['Steal window closed', ...prev]);
+        return { id: data.playerId, name: data.playerName };
+      });
     };
 
     const handlePlayerPointsResponse = (data: any) => {
@@ -87,375 +143,581 @@ export default function HostRound4() {
     };
 
     socket.on('round4-answer', handleRound4Answer);
-    socket.on('round4-steal-first', handleStealFirst);
-    socket.on('round4-open-steal-window', handleStealWindowOpen);
-    socket.on('round4-close-steal-window', handleStealWindowClose);
+    socket.on('round4-steal-first', handleStealAttempt);
     socket.on('player-points-response', handlePlayerPointsResponse);
     socket.on('player-points-awarded', handlePlayerPointsAwarded);
 
+    const handleRegisterPing = () => {
+      connectedClients.forEach((client) => {
+        socket.emit('request-player-points', { hostKey: currentRoom, targetClientId: client.id });
+      });
+    };
+    socket.on('client-roster-request', handleRegisterPing);
+
     return () => {
       socket.off('round4-answer', handleRound4Answer);
-      socket.off('round4-steal-first', handleStealFirst);
-      socket.off('round4-open-steal-window', handleStealWindowOpen);
-      socket.off('round4-close-steal-window', handleStealWindowClose);
+      socket.off('round4-steal-first', handleStealAttempt);
       socket.off('player-points-response', handlePlayerPointsResponse);
       socket.off('player-points-awarded', handlePlayerPointsAwarded);
+      socket.off('client-roster-request', handleRegisterPing);
     };
-  }, [isConnected]);
+  }, [isConnected, currentRoom, connectedClients]);
 
   useEffect(() => {
-    if (!isConnected || !currentRoom || connectedClients.length === 0) return;
+    if (!isConnected || connectedClients.length === 0 || !currentRoom) return;
     connectedClients.forEach((client) => {
-      socket.emit('request-player-points', {
-        hostKey: currentRoom,
-        targetClientId: client.id,
-      });
+      socket.emit('request-player-points', { hostKey: currentRoom, targetClientId: client.id });
     });
   }, [isConnected, connectedClients, currentRoom]);
 
-  const adjustPlayerPoints = (playerId: string, value: number, operation: 'set' | 'add') => {
-    if (!currentRoom) return;
-    socket.emit('adjust-player-points', {
+  const selectActivePlayerTurn = (playerId: string) => {
+    if (completedPlayerIds[playerId] || turnStaged) return;
+    setActivePlayerId(playerId);
+    setTurnStaged(false);
+    setSelectedPack(null);
+    setCurrentSubQuestionIndex(null);
+    setUsedSubQuestions({ 0: false, 1: false, 2: false });
+    setTurnFullyFinished(false);
+    setStarOfHopeActiveThisQuestion(false);
+  };
+
+  const handleStagePlayerTurn = () => {
+    if (!activePlayerId) return;
+    setTurnStaged(true);
+    socket.emit('round4-stage-turn', {
       hostKey: currentRoom,
-      targetClientId: playerId,
-      points: value,
-      operation,
-    });
-    setPlayerPoints((prev) => {
-      const current = prev[playerId] || 0;
-      const newTotal = operation === 'set' ? value : current + value;
-      return { ...prev, [playerId]: newTotal };
+      activePlayerId,
+      activePlayerName: connectedClients.find(c => c.id === activePlayerId)?.name || 'Player'
     });
   };
 
-  const handleManualPointsChange = (playerId: string, value: string) => {
-    setManualPoints((prev) => ({ ...prev, [playerId]: value }));
+  const selectPack = (pack: PackValue) => {
+    if (!turnStaged) return;
+    setSelectedPack(pack);
+    setCurrentSubQuestionIndex(null);
+    setUsedSubQuestions({ 0: false, 1: false, 2: false });
+
+    socket.emit('reveal-question', {
+      hostKey: currentRoom,
+      clueIndex: pack,
+      question: 'pack-chosen'
+    });
   };
 
-  const handleSetPlayerPoints = (playerId: string) => {
-    const raw = manualPoints[playerId];
-    const newValue = Number(raw);
-    if (Number.isNaN(newValue)) return;
-    adjustPlayerPoints(playerId, newValue, 'set');
+  const handleTriggerStarOfHopePreQuestion = () => {
+    if (!activePlayerId || starOfHopeUsedByPlayer[activePlayerId] || questionSelected) return;
+    setStarOfHopeActiveThisQuestion(true);
+    
+    socket.emit('reveal-question', {
+      hostKey: currentRoom,
+      clueIndex: 777,
+      question: 'star-hope-activated'
+    });
   };
 
-  const handleAddPlayerPoints = (playerId: string) => {
-    const raw = manualPoints[playerId];
-    const delta = Number(raw);
-    if (Number.isNaN(delta)) return;
-    adjustPlayerPoints(playerId, delta, 'add');
-  };
+  const selectSubQuestion = (index: number) => {
+    if (selectedPack === null || !activePlayerId || questionSelected) return;
 
-  const choosePlayer = (clientId: string, clientName: string) => {
-    setSelectedPlayerId(clientId);
-    setSelectedPlayerName(clientName);
-  };
+    const targetQuestion = PROTOTYPE_QUESTION_BANK[selectedPack][index];
+    setCurrentSubQuestionIndex(index);
+    setQuestionPrompt(targetQuestion.question);
+    setQuestionSelected(true);
+    setTimerRunning(false);
+    setPlayerAnswers([]);
+    setCurrentStealAttempt(null);
+    setStealWindowOpen(false);
+    
+    setUsedSubQuestions(prev => ({ ...prev, [index]: true }));
 
-  const startQuestion = () => {
-    if (!currentRoom || !selectedPlayerId || !questionText.trim()) return;
     socket.emit('round4-start-question', {
       hostKey: currentRoom,
-      question: questionText.trim(),
-      value: packValue,
-      star: false,
-      activePlayerId: selectedPlayerId,
-      activePlayerName: selectedPlayerName,
-      duration: 20,
+      question: targetQuestion.question,
+      value: targetQuestion.points,
+      activePlayerId,
+      activePlayerName: connectedClients.find(c => c.id === activePlayerId)?.name || 'Active Player',
+      duration: dynamicDuration,
+      star: starOfHopeActiveThisQuestion
     });
-    setRoundActive(true);
-    setStealWindowOpen(false);
-    setCurrentStealAttempt(null);
-    setActionLog((prev) => [`Started Round4 question for ${selectedPlayerName} (${packValue} points)`, ...prev]);
   };
 
-  const markActiveCorrect = () => {
-    if (!currentRoom || !selectedPlayerId) return;
+  const startQuestionTimer = () => {
+    if (!questionSelected || timerRunning) return;
+    setTimerRunning(true);
+    setHostTimeLeft(dynamicDuration);
+
+    if (mainTimerRef.current) window.clearInterval(mainTimerRef.current);
+    mainTimerRef.current = window.setInterval(() => {
+      setHostTimeLeft((t) => {
+        if (t === null) return null;
+        if (t <= 1) {
+          if (mainTimerRef.current) window.clearInterval(mainTimerRef.current);
+          setTimerRunning(false);
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+  };
+
+  const markVerdictCorrect = () => {
+    if (selectedPack === null || currentSubQuestionIndex === null || stealWindowOpen) return;
+
+    const awardPoints = starOfHopeActiveThisQuestion ? (currentSubQuestionPoints * 2) : currentSubQuestionPoints;
+
     socket.emit('round4-answer-verdict', {
       hostKey: currentRoom,
-      targetClientId: selectedPlayerId,
+      targetClientId: activePlayerId,
       correct: true,
-      points: packValue,
-      message: `Correct answer! +${packValue} points awarded.`,
+      message: starOfHopeActiveThisQuestion 
+        ? `⭐ Star of Hope Success! You earned double: +${awardPoints} points.` 
+        : `Correct! You earned +${awardPoints} points.`,
+      points: awardPoints
     });
-    setRoundActive(false);
-    setStealWindowOpen(false);
-    setCurrentStealAttempt(null);
-    setActionLog((prev) => [`${selectedPlayerName} answered correctly and earned ${packValue} points.`, ...prev]);
+
+    if (starOfHopeActiveThisQuestion) {
+      setStarOfHopeUsedByPlayer((prev) => ({ ...prev, [activePlayerId]: true }));
+    }
+
+    setPlayerPoints((prev) => ({ ...prev, [activePlayerId]: (prev[activePlayerId] || 0) + awardPoints }));
+    cleanupRoundWorkflow();
   };
 
-  const markActiveIncorrect = () => {
-    if (!currentRoom || !selectedPlayerId) return;
+  const markVerdictIncorrect = () => {
+    if (selectedPack === null || currentSubQuestionIndex === null || stealWindowOpen) return;
+
+    let updatedActivePoints = playerPoints[activePlayerId] || 0;
+    if (starOfHopeActiveThisQuestion) {
+      setStarOfHopeUsedByPlayer((prev) => ({ ...prev, [activePlayerId]: true }));
+      updatedActivePoints = Math.max(0, updatedActivePoints - currentSubQuestionPoints);
+      
+      socket.emit('adjust-player-points', {
+        hostKey: currentRoom,
+        targetClientId: activePlayerId,
+        points: updatedActivePoints,
+        operation: 'set'
+      });
+      setPlayerPoints((prev) => ({ ...prev, [activePlayerId]: updatedActivePoints }));
+    }
+
     socket.emit('round4-answer-verdict', {
       hostKey: currentRoom,
-      targetClientId: selectedPlayerId,
+      targetClientId: activePlayerId,
       correct: false,
-      points: 0,
-      message: 'Incorrect answer. Steal window is now open.',
+      message: 'Incorrect answer. Steal window is now open!',
+      points: 0
     });
-    socket.emit('round4-open-steal-window', { hostKey: currentRoom });
-    setRoundActive(false);
+
     setStealWindowOpen(true);
-    setActionLog((prev) => [`${selectedPlayerName} answered incorrectly. Steal window opened.`, ...prev]);
+    setStealTimeLeft(5);
+    socket.emit('round4-open-steal-window', { hostKey: currentRoom });
+
+    if (stealTimerRef.current) window.clearInterval(stealTimerRef.current);
+    stealTimerRef.current = window.setInterval(() => {
+      setStealTimeLeft((t) => {
+        if (t === null) return null;
+        if (t <= 1) {
+          if (stealTimerRef.current) window.clearInterval(stealTimerRef.current);
+          setStealWindowOpen(false);
+          socket.emit('round4-close-steal-window', { hostKey: currentRoom });
+          cleanupRoundWorkflow();
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
   };
 
-  const acceptSteal = () => {
-    if (!currentRoom || !currentStealAttempt) return;
-    const stealPoints = Math.max(0, Math.floor(packValue / 2));
+  const handleStealVerdictCorrect = () => {
+    if (!currentStealAttempt || selectedPack === null) return;
+
     socket.emit('round4-steal-verdict', {
       hostKey: currentRoom,
       targetClientId: currentStealAttempt.id,
       correct: true,
-      points: stealPoints,
-      message: `Steal successful! +${stealPoints} points awarded.`,
+      message: `Steal Successful! You earned +${currentSubQuestionPoints} points.`,
+      points: currentSubQuestionPoints
     });
-    socket.emit('round4-close-steal-window', { hostKey: currentRoom });
-    setStealWindowOpen(false);
-    setActionLog((prev) => [`Steal accepted for ${currentStealAttempt.name}, awarded ${stealPoints} points.`, ...prev]);
+    
+    const currentActivePoints = playerPoints[activePlayerId] || 0;
+    const activeNewPoints = Math.max(0, currentActivePoints - currentSubQuestionPoints);
+
+    socket.emit('adjust-player-points', {
+      hostKey: currentRoom,
+      targetClientId: activePlayerId,
+      points: activeNewPoints,
+      operation: 'set'
+    });
+
+    setPlayerPoints((prev) => ({
+      ...prev,
+      [currentStealAttempt.id]: (prev[currentStealAttempt.id] || 0) + currentSubQuestionPoints,
+      [activePlayerId]: activeNewPoints
+    }));
+
+    cleanupRoundWorkflow();
   };
 
-  const denySteal = () => {
-    if (!currentRoom || !currentStealAttempt) return;
+  const handleStealVerdictIncorrect = () => {
+    if (!currentStealAttempt || selectedPack === null) return;
+    const penaltyPoints = Math.floor(currentSubQuestionPoints / 2);
+
     socket.emit('round4-steal-verdict', {
       hostKey: currentRoom,
       targetClientId: currentStealAttempt.id,
       correct: false,
-      points: 0,
-      message: 'Steal denied.',
+      message: `Steal Failed. You lost -${penaltyPoints} points.`,
+      points: 0
     });
-    socket.emit('round4-close-steal-window', { hostKey: currentRoom });
-    setStealWindowOpen(false);
-    setActionLog((prev) => [`Steal denied for ${currentStealAttempt.name}.`, ...prev]);
+
+    const stealerCurrentPoints = playerPoints[currentStealAttempt.id] || 0;
+    const stealerNewPoints = Math.max(0, stealerCurrentPoints - penaltyPoints);
+
+    socket.emit('adjust-player-points', {
+      hostKey: currentRoom,
+      targetClientId: currentStealAttempt.id,
+      points: stealerNewPoints,
+      operation: 'set'
+    });
+
+    setPlayerPoints((prev) => ({
+      ...prev,
+      [currentStealAttempt.id]: stealerNewPoints
+    }));
+
+    cleanupRoundWorkflow();
   };
 
-  const closeStealWindow = () => {
-    if (!currentRoom) return;
-    socket.emit('round4-close-steal-window', { hostKey: currentRoom });
-    setStealWindowOpen(false);
-    setCurrentStealAttempt(null);
-    setActionLog((prev) => ['Steal window manually closed.', ...prev]);
-  };
-
-  const terminateGame = () => {
-    if (!currentRoom) return;
+  const executeGameTermination = () => {
     socket.emit('terminate-game', { hostKey: currentRoom });
     navigate('/host');
   };
 
-  const handleLeave = () => {
-    disconnectSocket();
+  const handleMasterMorphButtonClick = () => {
+    if (areAllPlayersFinished) {
+      executeGameTermination();
+    } else {
+      if (!activePlayerId) return;
+      setCompletedPlayerIds(prev => ({ ...prev, [activePlayerId]: true }));
+      setActivePlayerId('');
+      setTurnStaged(false);
+      setSelectedPack(null);
+      setCurrentSubQuestionIndex(null);
+      setTurnFullyFinished(false);
+      setStarOfHopeActiveThisQuestion(false);
+
+      socket.emit('round4-turn-over', { hostKey: currentRoom });
+    }
   };
 
-  if (!isConnected || !currentRoom) {
-    return <div style={{ color: '#fff', padding: '20px' }}>Loading Round4 game...</div>;
-  }
+  const cleanupRoundWorkflow = () => {
+    if (mainTimerRef.current) window.clearInterval(mainTimerRef.current);
+    if (stealTimerRef.current) window.clearInterval(stealTimerRef.current);
+    
+    setQuestionSelected(false);
+    setTimerRunning(false);
+    setHostTimeLeft(null);
+    setStealWindowOpen(false);
+    setStealTimeLeft(null);
+    setCurrentStealAttempt(null);
+    setPlayerAnswers([]);
+    setStarOfHopeActiveThisQuestion(false); 
+
+    const allUsed = Object.values({ ...usedSubQuestions, [currentSubQuestionIndex!]: true }).every(v => v === true);
+    if (allUsed) {
+      setTurnFullyFinished(true);
+    }
+  };
+
+  const adjustPlayerPoints = (playerId: string, value: number, operation: 'set' | 'add') => {
+    if (!currentRoom) return;
+    const current = playerPoints[playerId] || 0;
+    const targetValue = operation === 'set' ? value : current + value;
+    const finalCleanValue = Math.max(0, targetValue); 
+
+    socket.emit('adjust-player-points', { hostKey: currentRoom, targetClientId: playerId, points: finalCleanValue, operation: 'set' });
+    setPlayerPoints((prev) => ({ ...prev, [playerId]: finalCleanValue }));
+  };
 
   return (
-    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
+    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h1>Host Round4 Game</h1>
-          <p>Room: <span style={{ color: '#4CAF50', fontFamily: 'monospace' }}>{currentRoom}</span></p>
+          <h1>Host Round 4 Dashboard</h1>
+          <p>Room Identifier Code: <span style={{ color: '#4CAF50', fontFamily: 'monospace' }}>{currentRoom}</span></p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={() => navigate('/host')} style={{ backgroundColor: '#555', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-            Back to Dashboard
+          {!areAllPlayersFinished && (
+            <button 
+              onClick={executeGameTermination} 
+              style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              🛑 Terminate Game
+            </button>
+          )}
+
+          <button 
+            onClick={handleMasterMorphButtonClick} 
+            style={{ 
+              backgroundColor: areAllPlayersFinished ? '#36f46f' : '#f4a261', 
+              color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer',
+              fontWeight: 'bold', boxShadow: areAllPlayersFinished ? '0 0 15px rgba(244,67,54,0.4)' : 'none',
+              transition: 'all 0.3s ease'
+            }}
+          >
+            {areAllPlayersFinished ? '🟢 Finish Game' : 'Reset Turn Standby'}
           </button>
-          <button onClick={terminateGame} style={{ backgroundColor: '#f4a261', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-            Terminate Game
-          </button>
-          <button onClick={handleLeave} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-            Leave Game
-          </button>
+          
+          <button onClick={disconnectSocket} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>Leave Game</button>
+          {/* Top Navbar Action Button: Disappears completely when everyone finishes their turn */}
         </div>
       </div>
 
       <hr style={{ borderColor: '#333', margin: '20px 0' }} />
 
-      <section style={{ marginBottom: '24px' }}>
-        <h2>Round4 Setup</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' }}>
-          <div style={{ backgroundColor: '#181818', border: '1px solid #333', borderRadius: '12px', padding: '16px' }}>
-            <h3>Select active player</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {connectedClients.length === 0 ? (
-                <p style={{ color: '#888' }}>No players connected yet.</p>
-              ) : (
-                connectedClients.map((client) => (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '20px' }}>
+        <div>
+          {/* Step 1 Matrix Selector */}
+          <section style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#1c1c1c', borderRadius: '8px' }}>
+            <h2>Step 1: Active Turn Matrix</h2>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '15px' }}>
+              {connectedClients.map((client) => {
+                const isFinished = completedPlayerIds[client.id];
+                const isCurrent = activePlayerId === client.id;
+                return (
                   <button
                     key={client.id}
-                    onClick={() => choosePlayer(client.id, client.name)}
+                    disabled={isFinished || turnStaged || (activePlayerId !== '' && !isCurrent)}
+                    onClick={() => selectActivePlayerTurn(client.id)}
                     style={{
-                      padding: '12px',
-                      backgroundColor: client.id === selectedPlayerId ? '#2a9d8f' : '#111',
-                      color: '#fff',
-                      border: '1px solid #333',
-                      borderRadius: '10px',
-                      textAlign: 'left',
-                      cursor: 'pointer',
+                      padding: '12px 18px', borderRadius: '6px', border: 'none', fontWeight: 'bold',
+                      cursor: (isFinished || turnStaged || (activePlayerId !== '' && !isCurrent)) ? 'not-allowed' : 'pointer',
+                      backgroundColor: isCurrent ? '#4CAF50' : isFinished ? '#222' : '#333',
+                      color: isFinished ? '#555' : '#fff'
                     }}
                   >
-                    {client.name}
+                    {client.name} {isFinished ? '[DONE]' : isCurrent ? '[ACTIVE]' : '[READY]'}
                   </button>
-                ))
-              )}
+                );
+              })}
             </div>
-          </div>
 
-          <div style={{ backgroundColor: '#181818', border: '1px solid #333', borderRadius: '12px', padding: '16px' }}>
-            <h3>Select pack value</h3>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              {[40, 60, 80].map((value) => (
+            {activePlayerId && !turnStaged && (
+              <button
+                onClick={handleStagePlayerTurn}
+                style={{ width: '100%', padding: '14px', backgroundColor: '#8E24AA', border: 'none', color: '#fff', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                🚀 Stage Player Turn
+              </button>
+            )}
+          </section>
+
+          {/* Step 2 Pack selection */}
+          {turnStaged && (
+            <section style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#1c1c1c', borderRadius: '8px' }}>
+              <h2>Step 2: Choose Point Pack</h2>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {([40, 60, 80] as PackValue[]).map((pack) => {
+                  const isSelected = selectedPack === pack;
+                  return (
+                    <button
+                      key={pack}
+                      disabled={questionSelected || turnFullyFinished}
+                      onClick={() => selectPack(pack)}
+                      style={{
+                        flex: 1, padding: '14px', fontSize: '1.1rem', borderRadius: '6px', border: 'none',
+                        cursor: (questionSelected || turnFullyFinished) ? 'not-allowed' : 'pointer',
+                        backgroundColor: isSelected ? '#1fc7d4' : '#2b2b2b',
+                        color: isSelected ? '#000' : '#fff', fontWeight: 'bold'
+                      }}
+                    >
+                      {pack} pts
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Step 3 Question Pool Matrix */}
+          {selectedPack !== null && (
+            <section style={{ marginBottom: '20px', padding: '16px', backgroundColor: '#1c1c1c', borderRadius: '8px' }}>
+              <h2>Step 3: Questions Pool</h2>
+              
+              {!questionSelected && (
                 <button
-                  key={value}
-                  onClick={() => setPackValue(value)}
+                  disabled={starOfHopeUsedByPlayer[activePlayerId] || starOfHopeActiveThisQuestion}
+                  onClick={handleTriggerStarOfHopePreQuestion}
                   style={{
-                    padding: '12px 16px',
-                    backgroundColor: packValue === value ? '#2a9d8f' : '#111',
-                    color: '#fff',
-                    border: '1px solid #333',
-                    borderRadius: '10px',
-                    cursor: 'pointer',
+                    width: '100%', padding: '12px', marginBottom: '15px', borderRadius: '6px', border: 'none', fontWeight: 'bold',
+                    cursor: (starOfHopeUsedByPlayer[activePlayerId] || starOfHopeActiveThisQuestion) ? 'not-allowed' : 'pointer',
+                    backgroundColor: starOfHopeActiveThisQuestion ? '#4CAF50' : starOfHopeUsedByPlayer[activePlayerId] ? '#222' : '#ffb703',
+                    color: starOfHopeUsedByPlayer[activePlayerId] ? '#555' : '#000'
                   }}
                 >
-                  {value} pts
+                  {starOfHopeActiveThisQuestion ? '🌟 Star of Hope Pre-Activated!' : starOfHopeUsedByPlayer[activePlayerId] ? '🌟 Star of Hope Already Used' : '🌟 Click to Activate Star of Hope (Pre-Question)'}
                 </button>
-              ))}
-            </div>
-            <div style={{ marginTop: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', color: '#ccc' }}>Question prompt</label>
-              <textarea
-                rows={4}
-                value={questionText}
-                onChange={(e) => setQuestionText(e.target.value)}
-                style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #333', backgroundColor: '#111', color: '#fff' }}
-                placeholder="Enter the Round4 question here"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: '18px' }}>
-          <button
-            onClick={startQuestion}
-            disabled={!selectedPlayerId || !questionText.trim()}
-            style={{
-              padding: '14px 20px',
-              backgroundColor: !selectedPlayerId || !questionText.trim() ? '#555' : '#4CAF50',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '10px',
-              cursor: !selectedPlayerId || !questionText.trim() ? 'not-allowed' : 'pointer',
-            }}
-          >
-            Start Round4 Question
-          </button>
-        </div>
-      </section>
-
-      <section style={{ marginBottom: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' }}>
-        <div style={{ backgroundColor: '#181818', borderRadius: '12px', border: '1px solid #333', padding: '16px' }}>
-          <h2>Current Question</h2>
-          <p style={{ color: '#ccc' }}>Active player: <strong>{selectedPlayerName || 'None'}</strong></p>
-          <p style={{ color: '#ccc' }}>Pack value: <strong>{packValue} pts</strong></p>
-          <div style={{ marginTop: '12px', backgroundColor: '#121212', borderRadius: '10px', padding: '16px', minHeight: '110px' }}>
-            {questionText ? <p style={{ margin: 0 }}>{questionText}</p> : <p style={{ margin: 0, color: '#888' }}>No question started yet.</p>}
-          </div>
-          <div style={{ marginTop: '16px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <button
-              onClick={markActiveCorrect}
-              disabled={!roundActive}
-              style={{
-                padding: '12px 16px',
-                backgroundColor: roundActive ? '#2a9d8f' : '#555',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: roundActive ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Mark Correct
-            </button>
-            <button
-              onClick={markActiveIncorrect}
-              disabled={!roundActive}
-              style={{
-                padding: '12px 16px',
-                backgroundColor: roundActive ? '#e63946' : '#555',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '10px',
-                cursor: roundActive ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Mark Incorrect / Open Steal
-            </button>
-          </div>
-          {stealWindowOpen && (
-            <div style={{ marginTop: '16px', padding: '14px', backgroundColor: '#111', borderRadius: '10px', border: '1px solid #333' }}>
-              <h3 style={{ margin: 0, marginBottom: '10px' }}>Steal Window</h3>
-              {currentStealAttempt ? (
-                <>
-                  <p style={{ margin: '0 0 10px' }}><strong>{currentStealAttempt.name}</strong> is attempting the steal.</p>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button onClick={acceptSteal} style={{ padding: '10px 14px', backgroundColor: '#2a9d8f', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>Accept Steal</button>
-                    <button onClick={denySteal} style={{ padding: '10px 14px', backgroundColor: '#d62828', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>Deny Steal</button>
-                  </div>
-                </>
-              ) : (
-                <p style={{ margin: '0' }}>Waiting for a player to attempt the steal...</p>
               )}
-              <button onClick={closeStealWindow} style={{ marginTop: '12px', padding: '10px 14px', backgroundColor: '#555', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
-                Close Steal Window
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {PROTOTYPE_QUESTION_BANK[selectedPack].map((item, idx) => {
+                  const wasFired = usedSubQuestions[idx];
+                  return (
+                    <button
+                      key={idx}
+                      disabled={wasFired || questionSelected}
+                      onClick={() => selectSubQuestion(idx)}
+                      style={{
+                        flex: 1, padding: '16px', borderRadius: '6px', border: 'none',
+                        cursor: (wasFired || questionSelected) ? 'not-allowed' : 'pointer',
+                        backgroundColor: currentSubQuestionIndex === idx ? '#4CAF50' : wasFired ? '#222' : '#ffa000',
+                        color: wasFired ? '#555' : '#fff', fontWeight: 'bold'
+                      }}
+                    >
+                      Q{idx + 1} ({item.points} pts)
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Turn Fully Finished Overlay Block */}
+          {turnFullyFinished && (
+            <section style={{ marginTop: '20px', padding: '16px', backgroundColor: '#102012', border: '1px solid #2e7d32', borderRadius: '8px' }}>
+              <button
+                onClick={handleMasterMorphButtonClick}
+                style={{ 
+                  width: '100%', padding: '14px', 
+                  backgroundColor: areAllPlayersFinished ? '#f44336' : '#4CAF50', 
+                  border: 'none', color: '#fff', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' 
+                }}
+              >
+                {areAllPlayersFinished ? '🛑 All Turns Finished! Click to Terminate Game' : '🏁 Close Turn (Clear Clients to Standby)'}
               </button>
-            </div>
+            </section>
           )}
         </div>
 
-        <div style={{ backgroundColor: '#181818', borderRadius: '12px', border: '1px solid #333', padding: '16px' }}>
-          <h2>Scoreboard</h2>
-          <div style={{ display: 'grid', gap: '10px' }}>
-            {connectedClients.map((client) => (
-              <div key={client.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '10px', alignItems: 'center', padding: '10px', backgroundColor: '#111', borderRadius: '10px' }}>
-                <div>
-                  <strong>{client.name}</strong>
-                  <div style={{ color: '#888', fontSize: '0.9rem' }}>{client.id.slice(0, 6)}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ margin: 0, fontSize: '1.2rem', color: '#4CAF50' }}>{playerPoints[client.id] || 0}</p>
-                </div>
-                <div>
-                  <input
-                    type="text"
-                    placeholder="+/- or set"
-                    value={manualPoints[client.id] || ''}
-                    onChange={(e) => handleManualPointsChange(client.id, e.target.value)}
-                    style={{ width: '100px', padding: '8px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#121212', color: '#fff' }}
-                  />
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button onClick={() => handleSetPlayerPoints(client.id)} style={{ flex: 1, padding: '8px', backgroundColor: '#2a9d8f', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer' }}>Set</button>
-                    <button onClick={() => handleAddPlayerPoints(client.id)} style={{ flex: 1, padding: '8px', backgroundColor: '#4CAF50', border: 'none', borderRadius: '8px', color: '#fff', cursor: 'pointer' }}>Add</button>
+        {/* Assessment Evaluation Control Desk Block */}
+        <div>
+          {questionSelected && (
+            <section style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '8px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>Operational Desk {starOfHopeActiveThisQuestion && <span style={{ color: '#ffb703' }}>(⭐ STAR ACTIVE)</span>}</h3>
+                {!timerRunning && hostTimeLeft === null && (
+                  <button 
+                    onClick={() => {
+                      startQuestionTimer();
+                      socket.emit('round4-start-timer', { hostKey: currentRoom, duration: dynamicDuration });
+                    }} 
+                    style={{ backgroundColor: '#ffb703', color: '#000', border: 'none', padding: '8px 16px', fontWeight: 'bold', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Start {dynamicDuration}s Timer
+                  </button>
+                )}
+                {hostTimeLeft !== null && (
+                  <span style={{ backgroundColor: timerRunning ? '#2a9d8f' : '#f44336', padding: '4px 10px', borderRadius: '4px', fontWeight: 'bold' }}>
+                    Timer: {hostTimeLeft}s
+                  </span>
+                )}
+              </div>
+
+              <div style={{ margin: '15px 0', padding: '12px', backgroundColor: '#111', borderRadius: '4px', borderLeft: '4px solid #ffa000' }}>
+                <p style={{ margin: 0, fontSize: '1rem' }}>{questionPrompt}</p>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <h4>Response Channels:</h4>
+                {playerAnswers.map((ans, idx) => (
+                  <div key={idx} style={{ padding: '10px', backgroundColor: '#222', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span><strong>{ans.name}:</strong> {ans.answer}</span>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        disabled={stealWindowOpen} 
+                        onClick={markVerdictCorrect} 
+                        style={{ backgroundColor: stealWindowOpen ? '#333' : '#4CAF50', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: stealWindowOpen ? 'not-allowed' : 'pointer' }}
+                      >
+                        Correct
+                      </button>
+                      <button 
+                        disabled={stealWindowOpen} 
+                        onClick={markVerdictIncorrect} 
+                        style={{ backgroundColor: stealWindowOpen ? '#333' : '#f44336', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: stealWindowOpen ? 'not-allowed' : 'pointer' }}
+                      >
+                        Incorrect
+                      </button>
+                    </div>
                   </div>
+                ))}
+                
+                {playerAnswers.length === 0 && (
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <button 
+                      disabled={stealWindowOpen} 
+                      onClick={markVerdictCorrect} 
+                      style={{ flex: 1, padding: '10px', backgroundColor: stealWindowOpen ? '#333' : '#4CAF50', border: 'none', color: '#fff', borderRadius: '4px', cursor: stealWindowOpen ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+                    >
+                      Force Pass Correct
+                    </button>
+                    <button 
+                      disabled={stealWindowOpen} 
+                      onClick={markVerdictIncorrect} 
+                      style={{ flex: 1, padding: '10px', backgroundColor: stealWindowOpen ? '#333' : '#f44336', border: 'none', color: '#fff', borderRadius: '4px', cursor: stealWindowOpen ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+                    >
+                      Force Pass Incorrect
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {stealWindowOpen && (
+                <div style={{ padding: '14px', backgroundColor: '#2b1b3d', border: '1px solid #7b2cbf', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h4 style={{ margin: 0, color: '#e0aaff' }}>Steal Buzz Active (Main Actions Inactive)</h4>
+                    {stealTimeLeft !== null && <span style={{ color: '#ffb703', fontWeight: 'bold' }}>{stealTimeLeft}s</span>}
+                  </div>
+
+                  {currentStealAttempt ? (
+                    <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#1a0f29', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span><strong>{currentStealAttempt.name}</strong> buzzed!</span>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={handleStealVerdictCorrect} style={{ backgroundColor: '#4CAF50', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Accept (+{currentSubQuestionPoints})</button>
+                        <button onClick={handleStealVerdictIncorrect} style={{ backgroundColor: '#f44336', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Deny</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p style={{ margin: '10px 0 0', fontStyle: 'italic', color: '#b5838d' }}>Awaiting buzzer click...</p>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Realtime Score Matrix */}
+          <section style={{ padding: '16px', backgroundColor: '#1c1c1c', borderRadius: '8px' }}>
+            <h2>Realtime Score Matrix</h2>
+            {connectedClients.map((client) => (
+              <div key={client.id} style={{ display: 'grid', gap: '8px', padding: '12px 0', borderBottom: '1px solid #333' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  options: <strong>{client.name} {client.id === activePlayerId ? <span style={{ color: '#ffa000', fontSize: '0.8rem' }}>[ACTIVE]</span> : ''}</strong>
+                  <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>{playerPoints[client.id] || 0} pts</span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    type="number"
+                    value={manualPoints[client.id] ?? ''}
+                    onChange={(e) => setManualPoints({ ...manualPoints, [client.id]: e.target.value })}
+                    placeholder="Delta"
+                    style={{ flex: 1, padding: '8px', backgroundColor: '#222', border: '1px solid #444', color: '#fff', borderRadius: '4px' }}
+                  />
+                  <button onClick={() => adjustPlayerPoints(client.id, Number(manualPoints[client.id]), 'add')} style={{ backgroundColor: '#264653', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px' }}>Add</button>
+                  <button onClick={() => adjustPlayerPoints(client.id, Number(manualPoints[client.id]), 'set')} style={{ backgroundColor: '#e76f51', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px' }}>Set</button>
                 </div>
               </div>
             ))}
-          </div>
+          </section>
         </div>
-      </section>
-
-      <section style={{ marginBottom: '24px' }}>
-        <h2>Action Log</h2>
-        <div style={{ maxHeight: '260px', overflowY: 'auto', padding: '16px', backgroundColor: '#111', borderRadius: '12px', border: '1px solid #333' }}>
-          {actionLog.length === 0 ? (
-            <p style={{ color: '#888' }}>No actions recorded yet.</p>
-          ) : (
-            actionLog.map((entry, index) => (
-              <div key={`${entry}-${index}`} style={{ marginBottom: '10px' }}>
-                <span style={{ color: '#ddd' }}>{entry}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

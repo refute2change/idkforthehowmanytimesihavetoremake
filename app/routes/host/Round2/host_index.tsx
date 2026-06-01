@@ -28,6 +28,7 @@ interface KeywordAttempt {
   name: string;
   answer: string;
   time: string;
+  rejectedEntry?: boolean; // Tracking custom property for evaluation safety checks
 }
 
 const initialClues: Clue[] = [
@@ -61,6 +62,10 @@ export default function HostRound2() {
   const [keywordTimeLeft, setKeywordTimeLeft] = useState<number | null>(null);
   const [playerPoints, setPlayerPoints] = useState<{ [playerId: string]: number }>({});
   const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
+  
+  // Historical ledger list tracking players who submitted completely wrong answers
+  const [failedPlayerIds, setFailedPlayerIds] = useState<{ [playerId: string]: boolean }>({});
+
   const hostTimerRef = useRef<number | null>(null);
   const keywordTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
@@ -78,6 +83,12 @@ export default function HostRound2() {
       .filter((answer) => selectedClue && answer.clueIndex === selectedClue.id),
     [playerAnswers, selectedClue],
   );
+
+  // FIX CONDITION: Checks if every single connected player is explicitly tracked inside the rejection ledger map
+  const haveAllPlayersFailedKeyword = useMemo(() => {
+    if (connectedClients.length === 0) return false;
+    return connectedClients.every((client) => failedPlayerIds[client.id] === true);
+  }, [connectedClients, failedPlayerIds]);
 
   useEffect(() => {
     if (!isConnected || !currentRoom) {
@@ -239,7 +250,6 @@ export default function HostRound2() {
       return { ...item, active: false };
     }));
     setSelectedClue(clue);
-    // Inform server/clients which clue was chosen, but do NOT reveal the question text yet
     socket.emit('select-clue', {
       hostKey: currentRoom,
       clueIndex: clue.id,
@@ -273,15 +283,12 @@ export default function HostRound2() {
         message: answer.accepted ? 'Your answer has been accepted as correct.' : 'Your answer was not accepted as correct.',
       });
 
-      // Award 10 points for correct answers
       if (answer.accepted) {
-        // Emit just the delta (10 points) to server, not the total
         socket.emit('award-player-points', {
           hostKey: currentRoom,
           targetClientId: answer.id,
           points: 10,
         });
-        // Update local state optimistically
         setPlayerPoints((prev) => {
           return { ...prev, [answer.id]: (prev[answer.id] || 0) + 10 };
         });
@@ -352,48 +359,47 @@ export default function HostRound2() {
     });
 
     if (correct) {
-      console.log(clueCount, selectedClue);
-      // Calculate keyword points based on game progress
-      let keywordPoints = 60; // default
+      let keywordPoints = 60; 
       if (clueCount < 1 || (clueCount == 1 && !selectedClue)) {
-        console.log('Awarding 60 points for keyword attempt after only 1 clue finalized');
         keywordPoints = 60;
       } else if (clueCount < 2 || (clueCount == 2 && !selectedClue)) {
-        console.log('Awarding 50 points for keyword attempt after only 2 clues finalized');
         keywordPoints = 50;
       } else if (clueCount < 3 || (clueCount == 3 && !selectedClue)) {
-        console.log('Awarding 40 points for keyword attempt after only 3 clues finalized');
         keywordPoints = 40;
       } else if (clueCount < 4 || (clueCount == 4 && !selectedClue)) {
-        console.log('Awarding 30 points for keyword attempt after only 4 clues finalized');
         keywordPoints = 30;
-      }
-      else {
-        console.log('Awarding 20 points for keyword attempt after all clues finalized');
+      } else {
         keywordPoints = 20;
       }
 
-      // Emit just the delta (keywordPoints) to server, not the total
       socket.emit('award-player-points', {
         hostKey: currentRoom,
         targetClientId: attempt.id,
         points: keywordPoints,
       });
-      // Update local state optimistically
       setPlayerPoints((prev) => {
         return { ...prev, [attempt.id]: (prev[attempt.id] || 0) + keywordPoints };
       });
 
-      setGameWon(true);
-      setKeywordWindowOpen(false);
-      socket.emit('close-keyword-window', { hostKey: currentRoom });
-      socket.emit('reveal-all-clues', {
-        hostKey: currentRoom,
-        clues: clues.map((clue) => ({ id: clue.id, label: clue.label, question: clue.question, answer: clue.answer })),
-      });
+      triggerMasterRevealSequence();
+    } else {
+      // FIX ADDITION: Track this user inside the rejection state directory ledger
+      setFailedPlayerIds((prev) => ({ ...prev, [attempt.id]: true }));
     }
 
     setKeywordAttempts((prev) => prev.filter((item) => item.id !== attempt.id || item.time !== attempt.time));
+  };
+
+  const triggerMasterRevealSequence = () => {
+    setGameWon(true);
+    setKeywordWindowOpen(false);
+    if (keywordTimerRef.current) window.clearInterval(keywordTimerRef.current);
+    
+    socket.emit('close-keyword-window', { hostKey: currentRoom });
+    socket.emit('reveal-all-clues', {
+      hostKey: currentRoom,
+      clues: clues.map((clue) => ({ id: clue.id, label: clue.label, question: clue.question, answer: clue.answer })),
+    });
   };
 
   const terminateGame = () => {
@@ -407,23 +413,19 @@ export default function HostRound2() {
 
   const revealQuestion = (duration = 15) => {
     if (!selectedClue || !currentRoom) return;
-    // Broadcast reveal to clients (server should forward to room)
     socket.emit('reveal-question', {
       hostKey: currentRoom,
       clueIndex: selectedClue.id,
       question: selectedClue.question,
-      // reveal-only should not enable typing; duration omitted or zero indicates no timer start
       duration: duration,
       final: selectedClue.id === 4,
     });
 
     setSelectedClueRevealed(true);
-    // don't start host-side timer here; the host will explicitly start the timer using startTimer()
   };
 
   const startTimer = (duration = 15) => {
     if (!selectedClue || !currentRoom || !selectedClueRevealed) return;
-    // Instruct server to start answer window across clients
     socket.emit('start-answer-window', {
       hostKey: currentRoom,
       clueIndex: selectedClue.id,
@@ -460,18 +462,15 @@ export default function HostRound2() {
   }
 
   return (
-    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
+    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>Host Round2 Game</h1>
           <p>Room: <span style={{ color: '#4CAF50', fontFamily: 'monospace' }}>{currentRoom}</span></p>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={() => navigate('/host')} style={{ backgroundColor: '#555', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-            Back to Dashboard
-          </button>
-          <button onClick={terminateGame} style={{ backgroundColor: '#f4a261', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-            Terminate Game
+          <button onClick={terminateGame} style={{ backgroundColor: '#f4a261', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+            {gameWon ? 'Finish Game' : 'Terminate Game'}
           </button>
           <button onClick={handleLeave} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
             Leave Game
@@ -481,7 +480,7 @@ export default function HostRound2() {
 
       <hr style={{ borderColor: '#333', margin: '20px 20px 24px' }} />
 
-      <section style={{ marginBottom: '24px' }}>
+      <section style={{ margin: '0 0 24px' }}>
         <h2>Choose a clue</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' }}>
           {clues.filter((clue) => clue.id !== 4).map((clue) => {
@@ -500,12 +499,12 @@ export default function HostRound2() {
                   cursor: isDisabled ? 'not-allowed' : 'pointer',
                 }}
               >
-              {clue.label}
-              <div style={{ marginTop: '8px', color: '#888', fontSize: '0.9rem' }}>
-                {clue.active ? 'Current active clue' : clue.used ? (clue.opened ? 'Opened' : 'Answered') : 'Available'}
-              </div>
-            </button>
-          );
+                {clue.label}
+                <div style={{ marginTop: '8px', color: '#888', fontSize: '0.9rem' }}>
+                  {clue.active ? 'Current active clue' : clue.used ? (clue.opened ? 'Opened' : 'Answered') : 'Available'}
+                </div>
+              </button>
+            );
           })}
           {finalClueVisible && (
             <button
@@ -548,11 +547,10 @@ export default function HostRound2() {
                 Start 15s Timer
               </button>
             </div>
-            {/* Player answers shown inside the Current Question element at all times */}
+
             <div style={{ marginTop: '16px', borderTop: '1px solid #2b2b2b', paddingTop: '12px' }}>
               <h3 style={{ margin: '0 0 8px' }}>Player Answers</h3>
               {(() => {
-                // Build a list of all connected players and attach their latest answer (if any)
                 const displayedPlayers = connectedClients.map((client) => {
                   const ansIndex = playerAnswers.findIndex((a) => a.id === client.id && (!selectedClue || a.clueIndex === selectedClue.id));
                   const ans = ansIndex >= 0 ? playerAnswers[ansIndex] : null;
@@ -574,49 +572,46 @@ export default function HostRound2() {
                 }
 
                 return (
-                <div style={{ display: 'grid', gap: '12px' }}>
-                  {displayedPlayers.map((p) => (
-                    <div key={p.id} style={{ padding: '12px', backgroundColor: '#141414', border: '1px solid #2b2b2b', borderRadius: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                        <div>
-                          <strong>{p.name}</strong>
-                          <div style={{ color: '#888', fontSize: '0.9rem' }}>{p.clueIndex >= 0 ? `for clue ${p.clueIndex + 1}` : 'no clue yet'}{p.time ? ` • ${p.time}` : ''}</div>
+                  <div style={{ display: 'grid', gap: '12px' }}>
+                    {displayedPlayers.map((p) => (
+                      <div key={p.id} style={{ backgroundColor: '#141414', border: '1px solid #2b2b2b', borderRadius: '8px', padding: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+                          <div>
+                            <strong>{p.name}</strong>
+                            <div style={{ color: '#888', fontSize: '0.9rem' }}>{p.clueIndex >= 0 ? `for clue ${p.clueIndex + 1}` : 'no clue yet'}{p.time ? ` • ${p.time}` : ''}</div>
+                          </div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ccc' }}>
+                            <input
+                              type="checkbox"
+                              checked={p.accepted}
+                              onChange={() => p.originalIndex >= 0 && toggleAnswerAccepted(p.originalIndex)}
+                              style={{ width: '18px', height: '18px' }}
+                              disabled={p.originalIndex < 0 || p.keywordAttempted}
+                            />
+                            <span style={{ fontSize: '0.9rem' }}>Mark as correct</span>
+                          </label>
                         </div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ccc' }}>
-                          <input
-                            type="checkbox"
-                            checked={p.accepted}
-                            onChange={() => p.originalIndex >= 0 && toggleAnswerAccepted(p.originalIndex)}
-                            style={{ width: '18px', height: '18px' }}
-                            disabled={p.originalIndex < 0 || p.keywordAttempted}
-                          />
-                          <span style={{ fontSize: '0.9rem' }}>Mark as correct</span>
-                        </label>
+                        <p style={{ margin: '8px 0 0' }}>{p.answer}</p>
                       </div>
-                      <p style={{ margin: '8px 0 0' }}>{p.answer}</p>
-                    </div>
-                  ))}
-                  {selectedClue && (
-                    <button
-                      onClick={finalizeClueJudgement}
-                      // disabled until the host timer has run out (hostTimeLeft === 0)
-                      disabled={hostTimeLeft !== 0}
-                      style={{ backgroundColor: hostTimeLeft === 0 ? '#4CAF50' : '#666', color: '#fff', border: 'none', padding: '12px 16px', borderRadius: '8px', cursor: hostTimeLeft === 0 ? 'pointer' : 'not-allowed', marginTop: '8px', alignSelf: 'flex-start' }}
-                    >
-                      Finalize Clue Outcome
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
+                    ))}
+                    {selectedClue && (
+                      <button
+                        onClick={finalizeClueJudgement}
+                        disabled={hostTimeLeft !== 0}
+                        style={{ backgroundColor: hostTimeLeft === 0 ? '#4CAF50' : '#666', color: '#fff', border: 'none', padding: '12px 16px', borderRadius: '8px', cursor: hostTimeLeft === 0 ? 'pointer' : 'not-allowed', marginTop: '8px', alignSelf: 'flex-start' }}
+                      >
+                        Finalize Clue Outcome
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ) : (
           <p style={{ color: '#aaa' }}>Choose a clue to send the question to players.</p>
         )}
       </section>
-
-      
 
       <section style={{ marginBottom: '24px' }}>
         <h2>Player Points</h2>
@@ -688,16 +683,27 @@ export default function HostRound2() {
             ))}
           </div>
         )}
-        {keywordWindowReady && !keywordWindowOpen && !gameWon && (
-          <div style={{ marginTop: '16px' }}>
+        
+        <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
+          {keywordWindowReady && !keywordWindowOpen && !gameWon && (
             <button
               onClick={() => startKeywordWindow(15)}
-              style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: '#ff9800', color: '#000', border: 'none', cursor: 'pointer' }}
+              style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: '#ff9800', color: '#000', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
             >
               Start Final Keyword Window
             </button>
-          </div>
-        )}
+          )}
+
+          {/* EMERGENCY REVEAL OVERRIDE BUTTON: Only displays if every connected player has failed an attempt */}
+          {haveAllPlayersFailedKeyword && !keywordWindowOpen && !gameWon && (
+            <button
+              onClick={triggerMasterRevealSequence}
+              style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: '#d90429', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 0 10px rgba(217,4,41,0.3)' }}
+            >
+              🚨 Everyone Failed. Reveal Everything!
+            </button>
+          )}
+        </div>
 
         {keywordWindowOpen && (
           <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#202020', borderRadius: '10px', border: '1px solid #444' }}>

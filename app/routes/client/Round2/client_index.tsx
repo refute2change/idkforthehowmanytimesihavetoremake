@@ -1,6 +1,7 @@
+// app/routes/play/round2/index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useSocket } from '../../../components/SocketContext';
+import { useSocket } from '../../../components/SocketContext'; //[cite: 7]
 import { socket } from '../../../socket';
 
 interface ClueQuestion {
@@ -62,7 +63,6 @@ export default function ClientRound2() {
     const handleClueSelected = (data: any) => {
       const nextQuestion = {
         clueIndex: data.clueIndex,
-        // store question text but mark as unrevealed until host triggers reveal
         question: data.question || 'No question available',
         final: Boolean(data.final),
       };
@@ -154,6 +154,15 @@ export default function ClientRound2() {
       }));
     };
 
+    // FIX ADDITION: Evict player to "/" and fully disconnect local socket when the host goes offline
+    const handleHostOfflineEviction = () => {
+      console.warn("Round 2 terminated: Host server dropped offline.");
+      navigate('/');
+      if (disconnectSocket) {
+        disconnectSocket();
+      }
+    };
+
     socket.on('clue-selected', handleClueSelected);
     socket.on('clue-result', handleClueResult);
     socket.on('keyword-result', handleKeywordResult);
@@ -164,6 +173,7 @@ export default function ClientRound2() {
     socket.on('start-keyword-window', handleKeywordWindowStart as any);
     socket.on('close-keyword-window', handleCloseKeywordWindow);
     socket.on('clue-state-update', handleClueStateUpdate);
+    socket.on('host-offline-evict', handleHostOfflineEviction);
 
     return () => {
       socket.off('clue-selected', handleClueSelected);
@@ -176,16 +186,17 @@ export default function ClientRound2() {
       socket.off('start-keyword-window', handleKeywordWindowStart as any);
       socket.off('close-keyword-window', handleCloseKeywordWindow);
       socket.off('clue-state-update', handleClueStateUpdate);
+      socket.off('host-offline-evict', handleHostOfflineEviction);
       if (timerRef.current) {
         window.clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [isConnected]);
+  }, [isConnected, navigate, disconnectSocket]);
 
   function handleRevealQuestion(data: any) {
     if (!data) return;
-    const { clueIndex, question, duration } = data;
+    const { clueIndex, question } = data;
     const nextQuestion: ClueQuestion = {
       clueIndex,
       question: question || 'No question available',
@@ -239,7 +250,6 @@ export default function ClientRound2() {
       }
     };
 
-    // Fetch accumulated points from server when component mounts
     socket.emit('get-player-points', { targetClientId: socket.id });
 
     socket.on('terminate-game', handleTerminateGame);
@@ -259,7 +269,6 @@ export default function ClientRound2() {
       clueIndex: currentQuestion.clueIndex,
       answer: answerText.trim(),
     });
-    // keep locally so player can see their latest submission and can retype/resubmit until timer expires
     setLatestSubmittedAnswer(answerText.trim());
     setAnswerText('');
   };
@@ -286,7 +295,7 @@ export default function ClientRound2() {
   }
 
   return (
-    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
+    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>Player Round2 Game</h1>
@@ -312,7 +321,7 @@ export default function ClientRound2() {
 
       <section style={{ marginBottom: '24px' }}>
         <h2>Clue progress</h2>
-        <div style={{ display: 'grid', gap: '16px', marginBottom: '18px' }}>
+        <div style={{ display: 'flex', gap: '16px', marginBottom: '18px', flexDirection: 'column' }}>
           {clueProgress.map((progress) => {
             const isSelected = progress.status === 'selected';
             const isOpened = progress.status === 'opened';
@@ -377,7 +386,6 @@ export default function ClientRound2() {
               if (e.key === 'Enter') {
                 e.preventDefault();
                 if (answerEnabled) sendAnswer();
-                
               }
             }}
             disabled={!answerEnabled || keywordUsed}

@@ -1,7 +1,6 @@
-// app/routes/client-view.tsx
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useSocket } from '../../components/SocketContext'; // FIX 1: Corrected context import path
+import { useSocket } from '../../components/SocketContext'; // FIX 1: Corrected context import path[cite: 6]
 import { socket } from '../../socket';
 
 export default function ClientView() {
@@ -9,14 +8,14 @@ export default function ClientView() {
   const [hostReply, setHostReply] = useState<string>("");
   const navigate = useNavigate();
 
-  // FIX 2: SECURITY GUARD - Kick users out to home if they try to visit this page offline
+  // FIX 2: SECURITY GUARD - Kick users out to home if they try to visit this page offline[cite: 6]
   useEffect(() => {
     if (!isConnected || !currentRoom) {
-      navigate('/'); // Bounce back to home.tsx / ConnectionManager
+      navigate('/'); // Bounce back to home.tsx / ConnectionManager[cite: 6]
     }
   }, [isConnected, currentRoom, navigate]);
 
-  // 3. LISTEN FOR LIVE SIGNALS FROM THE HOST
+  // 3. LISTEN FOR LIVE SIGNALS FROM THE HOST[cite: 6]
   useEffect(() => {
     if (!isConnected) return;
 
@@ -32,18 +31,29 @@ export default function ClientView() {
       navigate('/play/round4');
     }
 
+    // FIX ADDITION: Triggers full disconnection and routes player back to "/" if the host goes offline
+    const handleHostOfflineEviction = () => {
+      console.warn("Lobby collapsed: Host server dropped offline.");
+      navigate('/');
+      if (disconnectSocket) {
+        disconnectSocket();
+      }
+    };
+
     socket.on('host-signal', handleHostSignal);
     socket.on('open-round2', handleOpenRound2);
     socket.on('open-round4', handleOpenRound4);
+    socket.on('host-offline-evict', handleHostOfflineEviction);
 
     return () => {
       socket.off('host-signal', handleHostSignal);
       socket.off('open-round2', handleOpenRound2);
       socket.off('open-round4', handleOpenRound4);
+      socket.off('host-offline-evict', handleHostOfflineEviction);
     };
-  }, [isConnected, navigate]);
+  }, [isConnected, navigate, disconnectSocket]);
 
-  // Action function to send data straight up to the active host room
+  // Action function to send data straight up to the active host room[cite: 6]
   const sendSignalToHost = () => {
     if (currentRoom) {
       socket.emit('message-to-host', { 
@@ -54,12 +64,12 @@ export default function ClientView() {
   };
 
   const handleLeaveRoom = () => {
-    disconnectSocket(); // Bounces user back to home via the security guard useEffect above
+    disconnectSocket(); // Bounces user back to home via the security guard useEffect above[cite: 6]
   };
 
-  // Prevent UI flash before redirect triggers
+  // Prevent UI flash before redirect triggers[cite: 6]
   if (!isConnected || !currentRoom) {
-    return <div style={{ color: '#fff', padding: '20px' }}>Connecting to workspace room...</div>;
+    return <div style={{ color: '#fff', padding: '20px' }}>Connecting to workspace room...</div>; //[cite: 6]
   }
 
   return (
@@ -102,7 +112,7 @@ export default function ClientView() {
       </div>
 
       {hostReply ? (
-        <div style={{ backgroundColor: '#222', padding: '15px', borderRadius: '4px', borderLeft: '4px solid #4CAF50' }}>
+        <div style={{ backgroundColor: '#222', padding: '15px', borderRadius: '#4CAF50', borderLeft: '4px solid #4CAF50' }}>
           <strong>Latest Message from Host:</strong>
           <p style={{ margin: '5px 0 0 0', fontFamily: 'monospace' }}>{hostReply}</p>
         </div>

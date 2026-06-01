@@ -1,13 +1,7 @@
-// app/routes/host-dashboard.tsx
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useSocket } from '../../components/SocketContext';
 import { socket } from '../../socket';
-
-interface ConnectedClient {
-  id: string;
-  name: string;
-}
 
 export default function HostDashboard() {
   const { isConnected, currentRoom, disconnectSocket, connectedClients } = useSocket();
@@ -16,20 +10,17 @@ export default function HostDashboard() {
   const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
   const navigate = useNavigate();
 
-  // 1. SECURITY GUARD: Kick users out if they try to visit this page offline
   useEffect(() => {
     if (!isConnected || !currentRoom) {
-      navigate('/'); // Bounce back to home.tsx
+      navigate('/'); 
     }
   }, [isConnected, currentRoom, navigate]);
 
-  // 2. LISTEN FOR LIVE PEER SIGNALS
   useEffect(() => {
     if (!isConnected) return;
 
     function handleClientSignal(data: any) {
       setIncomingSignals((prev) => [...prev, data]);
-
       socket.emit('message-from-host', {
         targetClientId: data.senderId,
         payload: `Host processed your message at ${new Date().toLocaleTimeString()}`,
@@ -37,7 +28,6 @@ export default function HostDashboard() {
     }
 
     socket.on('client-signal', handleClientSignal);
-
     return () => {
       socket.off('client-signal', handleClientSignal);
     };
@@ -45,7 +35,6 @@ export default function HostDashboard() {
 
   useEffect(() => {
     if (!isConnected || !currentRoom || connectedClients.length === 0) return;
-
     connectedClients.forEach((client) => {
       socket.emit('request-player-points', {
         hostKey: currentRoom,
@@ -59,19 +48,13 @@ export default function HostDashboard() {
 
     const handlePlayerPointsResponse = (data: any) => {
       if (data.playerId && typeof data.points === 'number') {
-        setPlayerPoints((prev) => ({
-          ...prev,
-          [data.playerId]: data.points,
-        }));
+        setPlayerPoints((prev) => ({ ...prev, [data.playerId]: data.points }));
       }
     };
 
     const handlePlayerPointsAwarded = (data: any) => {
       if (data.playerId && typeof data.points === 'number') {
-        setPlayerPoints((prev) => ({
-          ...prev,
-          [data.playerId]: data.points,
-        }));
+        setPlayerPoints((prev) => ({ ...prev, [data.playerId]: data.points }));
       }
     };
 
@@ -94,76 +77,48 @@ export default function HostDashboard() {
     });
     setPlayerPoints((prev) => {
       const current = prev[playerId] || 0;
-      const newTotal = operation === 'set' ? value : current + value;
-      return { ...prev, [playerId]: newTotal };
+      return { ...prev, [playerId]: operation === 'set' ? value : current + value };
     });
   };
 
-  const handleManualPointsChange = (playerId: string, value: string) => {
-    setManualPoints((prev) => ({ ...prev, [playerId]: value }));
+  // Master Room Shutdown: Fires termination event to players before disconnecting the host
+  const handleCloseWorkspace = () => {
+    if (currentRoom) {
+      // Broadcast the termination command so player clients redirect home/disconnect
+      socket.emit('terminate-game', { hostKey: currentRoom });
+    }
+    // Disconnect host socket connection cleanly
+    disconnectSocket();
   };
 
-  const handleSetPlayerPoints = (playerId: string) => {
-    const raw = manualPoints[playerId];
-    const newValue = Number(raw);
-    if (Number.isNaN(newValue)) return;
-    adjustPlayerPoints(playerId, newValue, 'set');
-  };
-
-  const handleAddPlayerPoints = (playerId: string) => {
-    const raw = manualPoints[playerId];
-    const delta = Number(raw);
-    if (Number.isNaN(delta)) return;
-    adjustPlayerPoints(playerId, delta, 'add');
-  };
-
-  // A helper function so the admin can safely disconnect and go home
-  const handleLeaveWorkspace = () => {
-    disconnectSocket(); // This sets states to false/null, which automatically triggers our security guard useEffect to push us home
-  };
-
-  // Prevent flash of content if rendering before the security redirect fires
   if (!isConnected || !currentRoom) {
     return <div style={{ color: '#fff', padding: '20px' }}>Loading workspace...</div>;
   }
 
   return (
-    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh' }}>
+    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>👑 Host Server Workspace</h1>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={() => {
-            socket.emit('open-round2', { hostKey: currentRoom });
-            navigate('/host/round2');
-          }} style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
-            Open Round2 Game
-          </button>
-          <button onClick={() => {
-            socket.emit('open-round4', { hostKey: currentRoom });
-            navigate('/host/round4');
-          }} style={{ backgroundColor: '#8E24AA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
-            Open Round4 Game
-          </button>
-          <button onClick={handleLeaveWorkspace} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>
-            Close Workspace
-          </button>
+          <button onClick={() => { socket.emit('open-round2', { hostKey: currentRoom }); navigate('/host/round2'); }} style={{ backgroundColor: '#008CBA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>Open Round2 Game</button>
+          <button onClick={() => { socket.emit('open-round4', { hostKey: currentRoom }); navigate('/host/round4'); }} style={{ backgroundColor: '#8E24AA', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer' }}>Open Round4 Game</button>
+          
+          {/* Linked to handleCloseWorkspace method handler */}
+          <button onClick={handleCloseWorkspace} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Close Workspace</button>
         </div>
       </div>
       
       <p>Active Room Key: <span style={{ color: '#4CAF50', fontFamily: 'monospace', fontSize: '1.2em' }}>{currentRoom}</span></p>
-      
       <hr style={{ borderColor: '#333', margin: '20px 0' }} />
 
       <section style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ margin: 0 }}>Connected Clients</h3>
+          <h3 style={{ margin: 0 }}>Connected Clients (Fixed Slot Sequence)</h3>
           <span style={{ color: '#888' }}>{connectedClients.length} connected</span>
         </div>
         <div style={{ display: 'grid', gap: '12px' }}>
           {connectedClients.length === 0 ? (
-            <div style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', color: '#aaa' }}>
-              No clients are connected yet.
-            </div>
+            <div style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', color: '#aaa' }}>No clients are connected yet.</div>
           ) : (
             connectedClients.map((client) => (
               <div key={client.id} style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px', display: 'grid', gap: '12px' }}>
@@ -171,37 +126,20 @@ export default function HostDashboard() {
                   <div>
                     <div style={{ fontWeight: 600 }}>{client.name}</div>
                     <div style={{ color: '#888', fontSize: '0.9rem' }}>{client.id}</div>
-                    <div style={{ color: '#4CAF50', fontSize: '0.95rem', marginTop: '4px' }}>
-                      {playerPoints[client.id] || 0} pts
-                    </div>
+                    <div style={{ color: '#4CAF50', fontSize: '0.95rem', marginTop: '4px' }}>{playerPoints[client.id] || 0} pts</div>
                   </div>
-                  <button
-                    onClick={() => socket.emit('kick-client', { targetClientId: client.id })}
-                    style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '6px', cursor: 'pointer' }}
-                  >
-                    Kick
-                  </button>
+                  <button onClick={() => socket.emit('kick-client', { targetClientId: client.id })} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '6px', cursor: 'pointer' }}>Kick</button>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <input
                     type="number"
                     value={manualPoints[client.id] ?? ''}
-                    onChange={(e) => handleManualPointsChange(client.id, e.target.value)}
+                    onChange={(e) => setManualPoints({ ...manualPoints, [client.id]: e.target.value })}
                     placeholder="+/- or set"
                     style={{ width: '120px', padding: '10px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#121212', color: '#fff' }}
                   />
-                  <button
-                    onClick={() => handleAddPlayerPoints(client.id)}
-                    style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#4CAF50', color: '#fff', border: 'none', cursor: 'pointer' }}
-                  >
-                    Add
-                  </button>
-                  <button
-                    onClick={() => handleSetPlayerPoints(client.id)}
-                    style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#FFA000', color: '#fff', border: 'none', cursor: 'pointer' }}
-                  >
-                    Set
-                  </button>
+                  <button onClick={() => adjustPlayerPoints(client.id, Number(manualPoints[client.id]), 'add')} style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#4CAF50', color: '#fff', border: 'none', cursor: 'pointer' }}>Add</button>
+                  <button onClick={() => adjustPlayerPoints(client.id, Number(manualPoints[client.id]), 'set')} style={{ padding: '10px 14px', borderRadius: '8px', backgroundColor: '#FFA000', color: '#fff', border: 'none', cursor: 'pointer' }}>Set</button>
                 </div>
               </div>
             ))
@@ -210,10 +148,9 @@ export default function HostDashboard() {
       </section>
 
       <hr style={{ borderColor: '#333', margin: '20px 0' }} />
-      
       <h3>Incoming Data Pipeline Logs:</h3>
       {incomingSignals.length === 0 ? (
-        <p style={{ color: '#888' }}>Waiting for peer clients to input room key "{currentRoom}" and send signals...</p>
+        <p style={{ color: '#888' }}>Waiting for peer clients...</p>
       ) : (
         <ul>
           {incomingSignals.map((sig, i) => (
