@@ -48,7 +48,32 @@ export default function HostRound4() {
     wrapper: { padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' },
     card: { marginBottom: '20px', padding: '16px', backgroundColor: '#1c1c1c', borderRadius: '8px' },
     gridRow: { display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '20px' },
-    scoreInput: { flex: 1, padding: '8px', backgroundColor: '#222', border: '1px solid #444', color: '#fff', borderRadius: '4px' }
+    scoreInput: { flex: 1, padding: '8px', backgroundColor: '#222', border: '1px solid #444', color: '#fff', borderRadius: '4px' },
+    terminateButton: { backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' },
+    masterMorphButton: (active: boolean) => ({ backgroundColor: active ? '#36f46f' : '#f4a261', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }),
+    playerButton: (completed: boolean, isActive: boolean) => ({ padding: '12px 18px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: completed ? 'not-allowed' : 'pointer', backgroundColor: isActive ? '#4CAF50' : completed ? '#222' : '#333', color: completed ? '#555' : '#fff' }),
+    stageButton: { width: '100%', padding: '14px', backgroundColor: '#8E24AA', border: 'none', color: '#fff', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' },
+    choosePack: (selected: boolean) => ({ flex: 1, padding: '14px', fontSize: '1.1rem', borderRadius: '6px', border: 'none', cursor: 'pointer', backgroundColor: selected ? '#1fc7d4' : '#2b2b2b', color: '#fff', fontWeight: 'bold' }),
+    starActivation: (thisQuestionActive: boolean, starOfHopeUsed: boolean, turnFinished: boolean) => ({
+      width: '100%', padding: '12px', marginBottom: '15px', borderRadius: '6px', border: 'none', fontWeight: 'bold', 
+      backgroundColor: thisQuestionActive ? '#4CAF50' : starOfHopeUsed || turnFinished ? '#222' : '#ffb703',
+      color: starOfHopeUsed || turnFinished ? '#555' : '#000', cursor: (starOfHopeUsed || thisQuestionActive || turnFinished) ? 'not-allowed' : 'pointer'
+    }),
+    nextQuestionButton: (isStaged: boolean) => ({
+      width: '100%', padding: '16px', borderRadius: '6px', border: 'none', fontSize: '1.1rem', fontWeight: 'bold', color: '#fff',
+      backgroundColor: isStaged ? '#222' : '#ffa000', boxShadow: !isStaged ? '0 4px 12px rgba(255, 160, 0, 0.2)' : 'none', cursor: isStaged ? 'not-allowed' : 'pointer', transition: 'all 0.2s'
+    }),
+    finishTurnSection: { marginTop: '20px', padding: '16px', backgroundColor: '#102012', border: '1px solid #2e7d32', borderRadius: '8px' },
+    finishTurnButton: { width: '100%', padding: '14px', backgroundColor: '#4CAF50', border: 'none', color: '#222', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' },
+    operationalDesk: { padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '8px', marginBottom: '20px' },
+    deskHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+    timerBtn: { backgroundColor: '#ffb703', color: '#000', border: 'none', padding: '8px 16px', fontWeight: 'bold', borderRadius: '4px', cursor: 'pointer' },
+    timerDisplay: { backgroundColor: '#f44336', padding: '4px 10px', borderRadius: '4px', fontWeight: 'bold' },
+    promptBox: { margin: '15px 0', padding: '12px', backgroundColor: '#111', borderRadius: '4px', borderLeft: '4px solid #ffa000' },
+    answerItem: { padding: '10px', backgroundColor: '#222', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' },
+    stealPanel: { padding: '14px', backgroundColor: '#2b1b3d', border: '1px solid #7b2cbf', borderRadius: '6px' },
+    stealHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+    scoreMatrixItem: { display: 'grid', gap: '8px', padding: '12px 0', borderBottom: '1px solid #333' }
   };
 
   const areAllPlayersFinished = useMemo(() => connectedClients.length > 0 && connectedClients.every(c => completedPlayerIds[c.id] === true), [connectedClients, completedPlayerIds]);
@@ -154,7 +179,7 @@ export default function HostRound4() {
     if (!currentStealAttempt || selectedPack === null) return;
     socket.emit('round4-steal-verdict', { hostKey: currentRoom, targetClientId: currentStealAttempt.id, correct: true, message: `Steal Success: +${currentSubQuestionPoints}`, points: currentSubQuestionPoints });
     const currentActivePoints = playerPoints[activePlayerId] || 0;
-    const activeNewPoints = Math.max(0, currentActivePoints - currentSubQuestionPoints);
+    const activeNewPoints = starOfHopeActiveThisQuestion ? currentActivePoints : Math.max(0, currentActivePoints - currentSubQuestionPoints);
     socket.emit('adjust-player-points', { hostKey: currentRoom, targetClientId: activePlayerId, points: activeNewPoints, operation: 'set' });
     setPlayerPoints((prev) => ({ ...prev, [currentStealAttempt.id]: (prev[currentStealAttempt.id] || 0) + currentSubQuestionPoints, [activePlayerId]: activeNewPoints }));
     cleanupRoundWorkflow();
@@ -197,11 +222,11 @@ export default function HostRound4() {
     setPlayerPoints((prev) => ({ ...prev, [id]: targetValue }));
   };
 
-  return (
+return (
     <div style={styles.wrapper}>
       <GameHeader title="Host Round 4 Dashboard">
-        {!areAllPlayersFinished && <button onClick={executeGameTermination} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🛑 Terminate Game</button>}
-        <button onClick={handleMasterMorphButtonClick} style={{ backgroundColor: areAllPlayersFinished ? '#36f46f' : '#f4a261', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{areAllPlayersFinished ? '🟢 Finish Game' : 'Reset Turn Standby'}</button>
+        {!areAllPlayersFinished && <button onClick={executeGameTermination} style={styles.terminateButton}>🛑 Terminate Game</button>}
+        <button onClick={handleMasterMorphButtonClick} style={styles.masterMorphButton(areAllPlayersFinished)}>{areAllPlayersFinished ? '🟢 Finish Game' : 'Reset Turn Standby'}</button>
       </GameHeader>
 
       <div style={styles.gridRow}>
@@ -210,12 +235,12 @@ export default function HostRound4() {
             <h2>Step 1: Active Turn Matrix</h2>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '15px' }}>
               {connectedClients.map((client) => (
-                <button key={client.id} disabled={completedPlayerIds[client.id] || turnStaged || (activePlayerId !== '' && activePlayerId !== client.id)} onClick={() => selectActivePlayerTurn(client.id)} style={{ padding: '12px 18px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: completedPlayerIds[client.id] ? 'not-allowed' : 'pointer', backgroundColor: activePlayerId === client.id ? '#4CAF50' : completedPlayerIds[client.id] ? '#222' : '#333', color: completedPlayerIds[client.id] ? '#555' : '#fff' }}>
+                <button key={client.id} disabled={completedPlayerIds[client.id] || turnStaged || (activePlayerId !== '' && activePlayerId !== client.id)} onClick={() => selectActivePlayerTurn(client.id)} style={styles.playerButton(completedPlayerIds[client.id], activePlayerId === client.id)}>
                   {client.name} {completedPlayerIds[client.id] ? '[DONE]' : activePlayerId === client.id ? '[ACTIVE]' : '[READY]'}
                 </button>
               ))}
             </div>
-            {activePlayerId && !turnStaged && <button onClick={handleStagePlayerTurn} style={{ width: '100%', padding: '14px', backgroundColor: '#8E24AA', border: 'none', color: '#fff', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }}>🚀 Stage Player Turn</button>}
+            {activePlayerId && !turnStaged && <button onClick={handleStagePlayerTurn} style={styles.stageButton}>🚀 Stage Player Turn</button>}
           </section>
 
           {turnStaged && (
@@ -223,7 +248,9 @@ export default function HostRound4() {
               <h2>Step 2: Choose Point Pack</h2>
               <div style={{ display: 'flex', gap: '12px' }}>
                 {([40, 60, 80] as PackValue[]).map((pack) => (
-                  <button key={pack} disabled={questionSelected || turnFullyFinished} onClick={() => selectPack(pack)} style={{ flex: 1, padding: '14px', fontSize: '1.1rem', borderRadius: '6px', border: 'none', cursor: 'pointer', backgroundColor: selectedPack === pack ? '#1fc7d4' : '#2b2b2b', color: '#fff', fontWeight: 'bold' }}>{pack} pts</button>
+                  <button key={pack} disabled={questionSelected || turnFullyFinished} onClick={() => selectPack(pack)} style={styles.choosePack(selectedPack === pack)}>
+                    {pack} pts
+                  </button>
                 ))}
               </div>
             </section>
@@ -232,82 +259,23 @@ export default function HostRound4() {
           {selectedPack !== null && (
             <section style={styles.card}>
               <h2>Step 3: Questions Pool</h2>
-              {!questionSelected && <button onClick={handleTriggerStarOfHopePreQuestion} disabled={
-                starOfHopeUsedByPlayer[activePlayerId] === true || 
-                starOfHopeActiveThisQuestion === true || 
-                turnFullyFinished === true
-              } style={{ width: '100%', padding: '12px', marginBottom: '15px', borderRadius: '6px', border: 'none', fontWeight: 'bold', 
-              backgroundColor: starOfHopeActiveThisQuestion 
-                ? '#4CAF50' 
-                : starOfHopeUsedByPlayer[activePlayerId] || turnFullyFinished
-                ? '#222' 
-                : '#ffb703',
-              color: starOfHopeUsedByPlayer[activePlayerId] || turnFullyFinished ? '#555' : '#000',
-              cursor: (starOfHopeUsedByPlayer[activePlayerId] || starOfHopeActiveThisQuestion || turnFullyFinished) ? 'not-allowed' : 'pointer' }}>
-                {starOfHopeActiveThisQuestion ? '🌟 Star Activated.'
-                : turnFullyFinished ? 'Turn Complete'
-                : starOfHopeUsedByPlayer[activePlayerId] ? '🌟 Already Used'
-                : '🌟 Click to Activate Star of Hope'}</button>}
+              {!questionSelected && <button onClick={handleTriggerStarOfHopePreQuestion} disabled={starOfHopeUsedByPlayer[activePlayerId] === true || starOfHopeActiveThisQuestion === true || turnFullyFinished === true} style={styles.starActivation(starOfHopeActiveThisQuestion, starOfHopeUsedByPlayer[activePlayerId], turnFullyFinished)}>
+                {starOfHopeActiveThisQuestion ? '🌟 Star Activated.' : turnFullyFinished ? 'Turn Complete' : starOfHopeUsedByPlayer[activePlayerId] ? '🌟 Already Used' : '🌟 Click to Activate Star of Hope'}
+              </button>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {(() => {
-                  // Determine what index needs to fire next sequentially (0, 1, or 2)
                   let nextSequentialIndex = 0;
                   if (usedSubQuestions[0]) nextSequentialIndex = 1;
                   if (usedSubQuestions[1]) nextSequentialIndex = 2;
-
                   const targetQuestionData = PROTOTYPE_QUESTION_BANK[selectedPack][nextSequentialIndex];
                   const isStagedOrRunning = questionSelected === true;
-
-                  if (turnFullyFinished) {
-                    return (
-                      <p style={{ margin: 0, color: '#666', textAlign: 'center', fontStyle: 'italic' }}>
-                        All 3 questions completed for this turn profile.
-                      </p>
-                    );
-                  }
-
-                  return (
-                    <button
-                      disabled={isStagedOrRunning}
-                      onClick={() => selectSubQuestion(nextSequentialIndex)}
-                      style={{
-                        width: '100%',
-                        padding: '16px',
-                        borderRadius: '6px',
-                        border: 'none',
-                        fontSize: '1.1rem',
-                        fontWeight: 'bold',
-                        color: '#fff',
-                        backgroundColor: isStagedOrRunning ? '#222' : '#ffa000',
-                        boxShadow: !isStagedOrRunning ? '0 4px 12px rgba(255, 160, 0, 0.2)' : 'none',
-                        cursor: isStagedOrRunning ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      {isStagedOrRunning 
-                        ? `⏳ Evaluation Desktop Active (Q${nextSequentialIndex + 1} Spanned)` 
-                        : `🚀 Spawn Next Question (Q${nextSequentialIndex + 1} — ${targetQuestionData.points} pts)`}
-                    </button>
-                  );
+                  if (turnFullyFinished) return <p style={{ margin: 0, color: '#666', textAlign: 'center', fontStyle: 'italic' }}>All 3 questions completed.</p>;
+                  return <button disabled={isStagedOrRunning} onClick={() => selectSubQuestion(nextSequentialIndex)} style={styles.nextQuestionButton(isStagedOrRunning)}>{isStagedOrRunning ? `⏳ Evaluation Active (Q${nextSequentialIndex + 1})` : `🚀 Spawn Next Question (Q${nextSequentialIndex + 1} — ${targetQuestionData.points} pts)`}</button>;
                 })()}
               </div>
               {turnFullyFinished && (
-                <section style={{ marginTop: '20px', padding: '16px', backgroundColor: '#102012', border: '1px solid #2e7d32', borderRadius: '8px' }}>
-                  <button
-                    onClick={handleMasterMorphButtonClick}
-                    style={{ 
-                      width: '100%', 
-                      padding: '14px', 
-                      backgroundColor: '#4CAF50', 
-                      border: 'none', 
-                      color: '#222', 
-                      fontWeight: 'bold', 
-                      borderRadius: '6px', 
-                      cursor: 'pointer' 
-                    }}
-                  >
-                    🏁 Close Turn (Clear Clients to Standby)
-                  </button>
+                <section style={styles.finishTurnSection}>
+                  <button onClick={handleMasterMorphButtonClick} style={styles.finishTurnButton}>🏁 Close Turn (Clear Clients to Standby)</button>
                 </section>
               )}
             </section>
@@ -316,31 +284,24 @@ export default function HostRound4() {
 
         <div>
           {questionSelected && (
-            <section style={{ padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '8px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <section style={styles.operationalDesk}>
+              <div style={styles.deskHeader}>
                 <h3>Operational Desk {starOfHopeActiveThisQuestion && <span style={{ color: '#ffb703' }}>(⭐ STAR ACTIVE)</span>}</h3>
-                {!timerRunning && hostTimeLeft === null ? (
-                  <button onClick={() => { startQuestionTimer(); socket.emit('round4-start-timer', { hostKey: currentRoom, duration: dynamicDuration }); }} style={{ backgroundColor: '#ffb703', color: '#000', border: 'none', padding: '8px 16px', fontWeight: 'bold', borderRadius: '4px', cursor: 'pointer' }}>Start {dynamicDuration}s Timer</button>
-                ) : <span style={{ backgroundColor: timerRunning ? '#2a9d8f' : '#f44336', padding: '4px 10px', borderRadius: '4px', fontWeight: 'bold' }}>Timer: {hostTimeLeft}s</span>}
+                {!timerRunning && hostTimeLeft === null ? <button onClick={() => { startQuestionTimer(); socket.emit('round4-start-timer', { hostKey: currentRoom, duration: dynamicDuration }); }} style={styles.timerBtn}>Start {dynamicDuration}s Timer</button> : <span style={styles.timerDisplay}>Timer: {hostTimeLeft}s</span>}
               </div>
-
-              <div style={{ margin: '15px 0', padding: '12px', backgroundColor: '#111', borderRadius: '4px', borderLeft: '4px solid #ffa000' }}><p style={{ margin: 0 }}>{questionPrompt}</p></div>
-
-              <div style={{ marginBottom: '20px' }}>
-                {playerAnswers.map((ans, idx) => (
-                  <div key={idx} style={{ padding: '10px', backgroundColor: '#222', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span><strong>{ans.name}:</strong> {ans.answer}</span>
-                    <div style={{ display: 'flex', gap: '8px' }}><button disabled={stealWindowOpen} onClick={markVerdictCorrect} style={{ backgroundColor: '#4CAF50', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Correct</button><button disabled={stealWindowOpen} onClick={markVerdictIncorrect} style={{ backgroundColor: '#f44336', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Incorrect</button></div>
+              <div style={styles.promptBox}><p style={{ margin: 0 }}>{questionPrompt}</p></div>
+              <div>
+                  <div style={styles.answerItem}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button disabled={stealWindowOpen} onClick={markVerdictCorrect} style={{ backgroundColor: '#4CAF50', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Correct</button>
+                      <button disabled={stealWindowOpen} onClick={markVerdictIncorrect} style={{ backgroundColor: '#f44336', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Incorrect</button>
+                    </div>
                   </div>
-                ))}
-                {playerAnswers.length === 0 && (
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}><button disabled={stealWindowOpen} onClick={markVerdictCorrect} style={{ flex: 1, padding: '10px', backgroundColor: '#4CAF50', border: 'none', color: '#fff', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>Force Pass Correct</button><button disabled={stealWindowOpen} onClick={markVerdictIncorrect} style={{ flex: 1, padding: '10px', backgroundColor: '#f44336', border: 'none', color: '#fff', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>Force Pass Incorrect</button></div>
-                )}
+                
               </div>
-
               {stealWindowOpen && (
-                <div style={{ padding: '14px', backgroundColor: '#2b1b3d', border: '1px solid #7b2cbf', borderRadius: '6px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h4>Steal Buzz Active</h4>{stealTimeLeft !== null && <span style={{ color: '#ffb703', fontWeight: 'bold' }}>{stealTimeLeft}s</span>}</div>
+                <div style={styles.stealPanel}>
+                  <div style={styles.stealHeader}><h4>Steal Buzz Active</h4>{stealTimeLeft !== null && <span style={{ color: '#ffb703', fontWeight: 'bold' }}>{stealTimeLeft}s</span>}</div>
                   {currentStealAttempt ? (
                     <div style={{ marginTop: '12px', padding: '10px', backgroundColor: '#1a0f29', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span><strong>{currentStealAttempt.name}</strong> buzzed!</span>
@@ -351,11 +312,10 @@ export default function HostRound4() {
               )}
             </section>
           )}
-
           <section style={styles.card}>
             <h2>Realtime Score Matrix</h2>
             {connectedClients.map((client) => (
-              <div key={client.id} style={{ display: 'grid', gap: '8px', padding: '12px 0', borderBottom: '1px solid #333' }}>
+              <div key={client.id} style={styles.scoreMatrixItem}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <strong>{client.name} {client.id === activePlayerId ? <span style={{ color: '#ffa000', fontSize: '0.8rem' }}>[ACTIVE]</span> : ''}</strong>
                   <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>{playerPoints[client.id] || 0} pts</span>

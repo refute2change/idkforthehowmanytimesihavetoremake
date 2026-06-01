@@ -11,6 +11,24 @@ export default function ClientView() {
   const [orderedIds, setOrderedIds] = useState<string[]>([]);
   const navigate = useNavigate();
 
+  const styles = {
+    container: {
+      padding: "20px",
+      color: "#fff",
+      backgroundColor: "#121212",
+      minHeight: "100vh"
+    },
+    pingHostButton: {
+      padding: "12px 24px",
+      marginBottom: "20px",
+      backgroundColor: "#333",
+      color: "#fff",
+      border: "1px solid #555",
+      borderRadius: "6px",
+      cursor: "pointer"
+    }
+  };
+
   const sortedClients = useMemo(() => {
     if (orderedIds.length === 0) return connectedClients;
     return [...connectedClients].sort((a, b) => orderedIds.indexOf(a.id) - orderedIds.indexOf(b.id));
@@ -51,22 +69,14 @@ export default function ClientView() {
     if (currentRoom) socket.emit('message-to-host', { hostKey: currentRoom, payload: { text: "Ping!", timestamp: Date.now() } });
   };
 
-  if (!isConnected || !currentRoom) return <div style={{ color: '#fff', padding: '20px' }}>Connecting...</div>;
+  if (!isConnected || !currentRoom) return <div style={styles.container}>Connecting...</div>;
 
   return (
-    <div style={{ padding: "20px", color: "#fff", backgroundColor: "#121212", minHeight: "100vh" }}>
+    <div style={styles.container}>
       <GameHeader title="👤 Standard Client Panel" />
       <button 
         onClick={sendSignalToHost} 
-        style={{ 
-          padding: "12px 24px", 
-          marginBottom: "20px", 
-          backgroundColor: "#333", // Distinct background
-          color: "#fff",          // Visible text
-          border: "1px solid #555",
-          borderRadius: "6px",
-          cursor: "pointer"
-        }}
+        style={styles.pingHostButton}
       >
         ⚡ Ping Host
       </button>

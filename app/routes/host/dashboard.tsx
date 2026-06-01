@@ -31,8 +31,16 @@ export default function HostDashboard() {
       cursor: disabled ? 'not-allowed' : 'pointer',
       fontSize: '0.8rem',
       fontWeight: 'bold'
-    })
+    }),
+    clientList: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }
   };
+
+  useEffect(() => {
+    if (isConnected && currentRoom) {
+      // Force the server to re-broadcast current scores to this host socket
+      socket.emit('request-room-leaderboard', { hostKey: currentRoom });
+    }
+  }, [isConnected, currentRoom]);
 
   useEffect(() => {
     if (!isConnected || !currentRoom) navigate('/');
@@ -53,6 +61,24 @@ export default function HostDashboard() {
       socket.off('client-signal', handleSignal);
       socket.off('player-points-response', handlePoints);
       socket.off('player-points-awarded', handlePoints);
+    };
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handleSnapshot = (data: { leaderboard: { id: string, points: number }[] }) => {
+      const pointsMap: { [playerId: string]: number } = {};
+      data.leaderboard.forEach(item => {
+        pointsMap[item.id] = item.points;
+      });
+      setPlayerPoints(pointsMap);
+    };
+
+    socket.on('room-leaderboard-snapshot', handleSnapshot);
+
+    return () => {
+      socket.off('room-leaderboard-snapshot', handleSnapshot);
     };
   }, [isConnected]);
 
@@ -86,7 +112,7 @@ export default function HostDashboard() {
       <h2>Connected Clients ({orderedClients.length})</h2>
       {orderedClients.map((client, index) => (
         <div key={client.id} style={styles.card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+          <div style={styles.clientList}>
             <button 
               style={styles.moveBtn(index === 0)} 
               onClick={() => movePlayer(index, -1)} 

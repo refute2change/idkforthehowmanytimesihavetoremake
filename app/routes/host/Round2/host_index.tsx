@@ -42,7 +42,35 @@ export default function HostRound2() {
     grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px' },
     card: { padding: '16px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px' },
     playerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#141414', border: '1px solid #2b2b2b', padding: '12px', borderRadius: '8px' },
-    scoreInput: { width: '100px', padding: '8px 10px', borderRadius: '6px', border: '1px solid #333', backgroundColor: '#121212', color: '#fff' }
+    scoreInput: { width: '100px', padding: '8px 10px', borderRadius: '6px', border: '1px solid #333', backgroundColor: '#121212', color: '#fff' },
+    terminateButton: {
+      backgroundColor: '#f4a261', 
+      color: 'white', 
+      border: 'none', 
+      padding: '10px 14px', 
+      borderRadius: '4px', 
+      cursor: 'pointer', 
+      fontWeight: 'bold' 
+    },
+    clueChoiceText: { marginTop: '8px', color: '#888', fontSize: '0.85rem' },
+    clueChoiceButton: (active: boolean, used: boolean) => ({
+      padding: '16px',
+      backgroundColor: active ? '#264653' : used ? '#333' : '#1e1e1e',
+      border: '1px solid #444',
+      borderRadius: '12px',
+      color: '#fff',
+      cursor: 'pointer'
+    }),
+    questionRevealButton: {
+      backgroundColor: '#0a84ff', 
+      color: '#fff', 
+      padding: '10px 14px', 
+      borderRadius: '8px', 
+      border: 'none', 
+      cursor: 'pointer'
+    },
+    timerButton: { backgroundColor: '#ffb703', padding: '10px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer' },
+    keywordButton: (correct: boolean) => ({ backgroundColor: correct ? '#4CAF50' : '#FFA000', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }),
   };
 
   const clueCount = useMemo(() => clues.filter((c) => c.id !== 4 && c.used && !c.active).length, [clues]);
@@ -152,8 +180,14 @@ export default function HostRound2() {
   const acceptKeyword = (attempt: KeywordAttempt, correct: boolean) => {
     socket.emit('keyword-verdict', { hostKey: currentRoom, targetClientId: attempt.id, correct, message: correct ? 'Solved!' : 'Wrong.' });
     if (correct) {
-      let pts = clueCount === 0 ? 60 : clueCount === 1 ? 50 : clueCount === 2 ? 40 : clueCount === 3 ? 30 : 20;
+      const pts = 
+        clueCount === 0 || (clueCount === 1 && !selectedClue) ? 80 :
+        clueCount === 1 || (clueCount === 2 && !selectedClue) ? 60 :
+        clueCount === 2 || (clueCount === 3 && !selectedClue) ? 40 :
+        clueCount === 3 || (clueCount === 4 && !selectedClue) ? 20 :
+        10;
       adjustPoints(attempt.id, pts, 'add');
+      setKeywordAttempts([]);
       triggerMasterRevealSequence();
     } else {
       setFailedPlayerIds((p) => ({ ...p, [attempt.id]: true }));
@@ -204,15 +238,7 @@ export default function HostRound2() {
       <GameHeader title="Host Round2 Control Console" subTitle={gameWon ? '✨ Round Completed' : 'Match Live'}>
         <button 
           onClick={terminateGame} 
-          style={{ 
-            backgroundColor: '#f4a261', 
-            color: 'white', 
-            border: 'none', 
-            padding: '10px 14px', 
-            borderRadius: '4px', 
-            cursor: 'pointer', 
-            fontWeight: 'bold' 
-          }}
+          style={styles.terminateButton}
         >
           {gameWon ? 'Finish Game' : 'Terminate Game'}
         </button>
@@ -222,15 +248,15 @@ export default function HostRound2() {
         <h2>Clue Selection Registry</h2>
         <div style={styles.grid}>
           {clues.filter((c) => c.id !== 4).map((clue) => (
-            <button key={clue.id} disabled={gameWon || (selectedClue !== null && selectedClue.id !== clue.id) || (clue.used && !clue.active)} onClick={() => chooseClue(clue)} style={{ padding: '16px', backgroundColor: clue.active ? '#264653' : clue.used ? '#333' : '#1e1e1e', border: '1px solid #444', borderRadius: '12px', color: '#fff', cursor: 'pointer' }}>
+            <button key={clue.id} disabled={gameWon || (selectedClue !== null && selectedClue.id !== clue.id) || (clue.used && !clue.active)} onClick={() => chooseClue(clue)} style={styles.clueChoiceButton(clue.active, clue.used)}>
               {clue.label}
-              <div style={{ marginTop: '8px', color: '#888', fontSize: '0.85rem' }}>{clue.active ? 'Current active' : clue.used ? 'Finalized' : 'Available'}</div>
+              <div style={styles.clueChoiceText}>{clue.active ? 'Current active' : clue.used ? 'Finalized' : 'Available'}</div>
             </button>
           ))}
           {finalClueVisible && (
-            <button disabled={gameWon || selectedClue !== null || !finalClueReady} onClick={chooseFinalClue} style={{ padding: '16px', backgroundColor: finalClueReady ? '#2a2a2a' : '#1f1f1f', border: '1px solid #444', borderRadius: '12px', color: '#fff', cursor: 'pointer' }}>
+            <button disabled={gameWon || selectedClue !== null || !finalClueReady} onClick={chooseFinalClue} style={styles.clueChoiceButton(finalClueReady, false)}>
               Final Clue
-              <div style={{ marginTop: '8px', color: '#888', fontSize: '0.85rem' }}>{finalClueReady ? 'Unlocked' : 'Locked (Requires 4 clue runs)'}</div>
+              <div style={styles.clueChoiceText}>{finalClueReady ? 'Unlocked' : 'Locked (Requires 4 clue runs)'}</div>
             </button>
           )}
         </div>
@@ -242,8 +268,8 @@ export default function HostRound2() {
           <div style={styles.card}>
             <h3>{selectedClueRevealed ? selectedClue.question : 'Question Hidden'}</h3>
             <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-              <button onClick={revealQuestion} disabled={selectedClueRevealed} style={{ backgroundColor: '#0a84ff', color: '#fff', padding: '10px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>Reveal Question</button>
-              <button onClick={startTimer} disabled={!selectedClueRevealed || (hostTimeLeft !== null && hostTimeLeft > 0)} style={{ backgroundColor: '#ffb703', padding: '10px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer' }}>Start 15s Timer</button>
+              <button onClick={revealQuestion} disabled={selectedClueRevealed} style={styles.questionRevealButton}>Reveal Question</button>
+              <button onClick={startTimer} disabled={!selectedClueRevealed || (hostTimeLeft !== null && hostTimeLeft > 0)} style={styles.timerButton}>Start 15s Timer</button>
             </div>
 
             <div style={{ marginTop: '20px' }}>
@@ -275,8 +301,8 @@ export default function HostRound2() {
               <strong>{client.name}</strong> — <span style={{ color: '#4CAF50' }}>{playerPoints[client.id] || 0} PTS</span>
               <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
                 <input type="number" placeholder="Delta" onChange={(e) => setManualPoints({ ...manualPoints, [client.id]: e.target.value })} style={styles.scoreInput} />
-                <button onClick={() => adjustPoints(client.id, Number(manualPoints[client.id]), 'add')} style={{ backgroundColor: '#4CAF50', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' }}>Add</button>
-                <button onClick={() => adjustPoints(client.id, Number(manualPoints[client.id]), 'set')} style={{ backgroundColor: '#FFA000', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' }}>Set</button>
+                <button onClick={() => adjustPoints(client.id, Number(manualPoints[client.id]), 'add')} style={styles.keywordButton(true)}>Add</button>
+                <button onClick={() => adjustPoints(client.id, Number(manualPoints[client.id]), 'set')} style={styles.keywordButton(false)}>Set</button>
               </div>
             </div>
           ))}
@@ -289,18 +315,18 @@ export default function HostRound2() {
           <div key={idx} style={styles.card}>
             <strong>{attempt.name}</strong> attempted: "{attempt.answer}"
             <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-              <button onClick={() => acceptKeyword(attempt, true)} style={{ backgroundColor: '#4CAF50', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Correct</button>
-              <button onClick={() => acceptKeyword(attempt, false)} style={{ backgroundColor: '#f44336', border: 'none', color: '#fff', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Incorrect</button>
+              <button onClick={() => acceptKeyword(attempt, true)} style={styles.keywordButton(true)}>Correct</button>
+              <button onClick={() => acceptKeyword(attempt, false)} style={styles.keywordButton(false)}>Incorrect</button>
             </div>
           </div>
         ))}
         
         <div style={{ marginTop: '16px', display: 'flex', gap: '12px' }}>
           {keywordWindowReady && !keywordWindowOpen && !gameWon && (
-            <button onClick={() => startKeywordWindow(15)} style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: '#ff9800', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Start Final Keyword Window</button>
+            <button onClick={() => startKeywordWindow(15)} style={styles.timerButton}>Start Final Keyword Window</button>
           )}
           {haveAllPlayersFailedKeyword && !keywordWindowOpen && !gameWon && (
-            <button onClick={triggerMasterRevealSequence} style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: '#d90429', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>🚨 Everyone Failed. Reveal Everything!</button>
+            <button onClick={triggerMasterRevealSequence} style={styles.timerButton}>🚨 Everyone Failed. Reveal Everything!</button>
           )}
         </div>
       </section>
