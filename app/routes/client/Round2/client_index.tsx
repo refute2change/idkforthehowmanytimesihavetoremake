@@ -1,8 +1,11 @@
-// app/routes/play/round2/index.tsx
+// app/routes/client/Round2/client_index.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useSocket } from '../../../components/SocketContext'; //[cite: 7]
+import { useSocket } from '../../../components/SocketContext';
 import { socket } from '../../../socket';
+import { GameHeader } from '../../../components/GameHeader';
+import { ClueProgressGrid } from '../../../components/ClueProgressGrid';
+import { SubmissionForm } from '../../../components/SubmissionForm';
 
 interface ClueQuestion {
   clueIndex: number;
@@ -39,12 +42,17 @@ export default function ClientRound2() {
   const [keywordWindowOpen, setKeywordWindowOpen] = useState(false);
   const [keywordWindowClosed, setKeywordWindowClosed] = useState(false);
   const [keywordTimeLeft, setKeywordTimeLeft] = useState<number | null>(null);
-  const [playerGameOver, setPlayerGameOver] = useState(false);
   const [playerPoints, setPlayerPoints] = useState(0);
   const timerRef = useRef<number | null>(null);
   const keywordTimerRef = useRef<number | null>(null);
-  const [questionHistory, setQuestionHistory] = useState<string[]>([]);
   const navigate = useNavigate();
+
+  const styles = {
+    wrapper: { padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' },
+    scoreContainer: { padding: '12px 16px', backgroundColor: '#1a1a1a', borderRadius: '8px', border: '1px solid #333', textAlign: 'center' as const },
+    infoBox: { padding: '18px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px' },
+    statusLabel: { marginTop: '12px', color: '#4CAF50', fontWeight: 'bold' }
+  };
 
   const questionLabel = useMemo(() => {
     if (!currentQuestion) return 'No clue selected yet.';
@@ -52,41 +60,23 @@ export default function ClientRound2() {
   }, [currentQuestion]);
 
   useEffect(() => {
-    if (!isConnected || !currentRoom) {
-      navigate('/');
-    }
+    if (!isConnected || !currentRoom) navigate('/');
   }, [isConnected, currentRoom, navigate]);
 
   useEffect(() => {
     if (!isConnected) return;
 
     const handleClueSelected = (data: any) => {
-      const nextQuestion = {
-        clueIndex: data.clueIndex,
-        question: data.question || 'No question available',
-        final: Boolean(data.final),
-      };
-      setCurrentQuestion({ ...nextQuestion, revealed: false });
+      setCurrentQuestion({ clueIndex: data.clueIndex, question: data.question || 'No question available', final: Boolean(data.final), revealed: false });
       setAnswerEnabled(false);
       setClueResult('');
-      setClueProgress((prev) => prev.map((item) => {
-        if (item.clueIndex === data.clueIndex) {
-          return { ...item, status: 'selected' };
-        }
-        if (item.status === 'selected') {
-          return { ...item, status: 'available' };
-        }
-        return item;
-      }));
+      setClueProgress((prev) => prev.map((item) => item.clueIndex === data.clueIndex ? { ...item, status: 'selected' } : (item.status === 'selected' ? { ...item, status: 'available' } : item)));
     };
 
-    const handleClueResult = (data: any) => {
-      setClueResult(data.correct ? 'Your clue answer was accepted.' : 'Your clue answer was rejected.');
-    };
-
+    const handleClueResult = (data: any) => setClueResult(data.correct ? 'Your clue answer was accepted.' : 'Your clue answer was rejected.');
+    
     const handleKeywordResult = (data: any) => {
       setKeywordResult(data.correct ? 'Keyword correct! Game over.' : 'Keyword attempt wrong.');
-      setPlayerGameOver(true);
       if (data.correct) {
         setCurrentQuestion(null);
         setKeywordWindowOpen(false);
@@ -95,25 +85,18 @@ export default function ClientRound2() {
     };
 
     const handleKeywordWindowStart = (data: any) => {
-      if (!data) return;
-      const duration = typeof data.duration === 'number' ? data.duration : 15;
+      const duration = data && typeof data.duration === 'number' ? data.duration : 15;
       setKeywordWindowOpen(true);
       setKeywordWindowClosed(false);
       setKeywordUsed(false);
       setKeywordTimeLeft(duration);
 
-      if (keywordTimerRef.current) {
-        window.clearInterval(keywordTimerRef.current);
-        keywordTimerRef.current = null;
-      }
+      if (keywordTimerRef.current) window.clearInterval(keywordTimerRef.current);
       keywordTimerRef.current = window.setInterval(() => {
         setKeywordTimeLeft((t) => {
           if (t === null) return null;
           if (t <= 1) {
-            if (keywordTimerRef.current) {
-              window.clearInterval(keywordTimerRef.current);
-              keywordTimerRef.current = null;
-            }
+            window.clearInterval(keywordTimerRef.current!);
             setKeywordWindowOpen(false);
             setKeywordWindowClosed(true);
             return 0;
@@ -123,44 +106,21 @@ export default function ClientRound2() {
       }, 1000);
     };
 
-    const handleCloseKeywordWindow = () => {
-      setKeywordWindowOpen(false);
-      setKeywordWindowClosed(true);
-      setKeywordTimeLeft(null);
-    };
-
     const handleRevealAll = (data: any) => {
       if (!data || !Array.isArray(data.clues)) return;
-      setQuestionHistory((prev) => [...prev, ...data.clues.map((clue: any) => `${clue.label}: ${clue.answer}`)]);
       setClueProgress((prev) => prev.map((item) => {
-        const matchingClue = data.clues.find((clue: any) => clue.id === item.clueIndex);
-        if (!matchingClue) return item;
-        return {
-          ...item,
-          status: 'opened',
-          answer: matchingClue.answer,
-        };
+        const match = data.clues.find((clue: any) => clue.id === item.clueIndex);
+        return match ? { ...item, status: 'opened', answer: match.answer } : item;
       }));
     };
 
     const handleClueStateUpdate = (data: any) => {
-      setClueProgress((prev) => prev.map((item) => {
-        if (item.clueIndex !== data.clueIndex) return item;
-        return {
-          ...item,
-          status: data.opened ? 'opened' : 'failed',
-          answer: data.opened ? data.answer : undefined,
-        };
-      }));
+      setClueProgress((prev) => prev.map((item) => item.clueIndex !== data.clueIndex ? item : { ...item, status: data.opened ? 'opened' : 'failed', answer: data.opened ? data.answer : undefined }));
     };
 
-    // FIX ADDITION: Evict player to "/" and fully disconnect local socket when the host goes offline
     const handleHostOfflineEviction = () => {
-      console.warn("Round 2 terminated: Host server dropped offline.");
       navigate('/');
-      if (disconnectSocket) {
-        disconnectSocket();
-      }
+      if (disconnectSocket) disconnectSocket();
     };
 
     socket.on('clue-selected', handleClueSelected);
@@ -168,10 +128,10 @@ export default function ClientRound2() {
     socket.on('keyword-result', handleKeywordResult);
     socket.on('keyword-correct', handleKeywordResult);
     socket.on('reveal-all-clues', handleRevealAll);
-    socket.on('reveal-question', handleRevealQuestion as any);
-    socket.on('start-answer-window', handleStartAnswerWindow as any);
-    socket.on('start-keyword-window', handleKeywordWindowStart as any);
-    socket.on('close-keyword-window', handleCloseKeywordWindow);
+    socket.on('reveal-question', handleRevealQuestion);
+    socket.on('start-answer-window', handleStartAnswerWindow);
+    socket.on('start-keyword-window', handleKeywordWindowStart);
+    socket.on('close-keyword-window', () => { setKeywordWindowOpen(false); setKeywordWindowClosed(true); });
     socket.on('clue-state-update', handleClueStateUpdate);
     socket.on('host-offline-evict', handleHostOfflineEviction);
 
@@ -181,55 +141,41 @@ export default function ClientRound2() {
       socket.off('keyword-result', handleKeywordResult);
       socket.off('keyword-correct', handleKeywordResult);
       socket.off('reveal-all-clues', handleRevealAll);
-      socket.off('reveal-question', handleRevealQuestion as any);
-      socket.off('start-answer-window', handleStartAnswerWindow as any);
-      socket.off('start-keyword-window', handleKeywordWindowStart as any);
-      socket.off('close-keyword-window', handleCloseKeywordWindow);
+      socket.off('reveal-question', handleRevealQuestion);
+      socket.off('start-answer-window', handleStartAnswerWindow);
+      socket.off('start-keyword-window', handleKeywordWindowStart);
       socket.off('clue-state-update', handleClueStateUpdate);
       socket.off('host-offline-evict', handleHostOfflineEviction);
-      if (timerRef.current) {
+      if (timerRef.current){
         window.clearInterval(timerRef.current);
         timerRef.current = null;
+      }
+      if (keywordTimerRef.current){
+        window.clearInterval(keywordTimerRef.current);
+        keywordTimerRef.current = null;
       }
     };
   }, [isConnected, navigate, disconnectSocket]);
 
   function handleRevealQuestion(data: any) {
     if (!data) return;
-    const { clueIndex, question } = data;
-    const nextQuestion: ClueQuestion = {
-      clueIndex,
-      question: question || 'No question available',
-      final: Boolean(data.final),
-      revealed: true,
-    };
-
-    setCurrentQuestion(nextQuestion);
-    setQuestionHistory((prev) => [nextQuestion.question, ...prev]);
+    setCurrentQuestion({ clueIndex: data.clueIndex, question: data.question || 'No question available', final: Boolean(data.final), revealed: true });
     setClueResult('');
   }
 
   function handleStartAnswerWindow(data: any) {
     if (!data) return;
-    const { duration } = data;
-    const secs = typeof duration === 'number' ? duration : 15;
-
+    const secs = typeof data.duration === 'number' ? data.duration : 15;
     setTimeLeft(secs);
     setAnswerEnabled(true);
 
-    if (timerRef.current) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = window.setInterval(() => {
       setTimeLeft((t) => {
         if (t === null) return null;
         if (t <= 1) {
           setAnswerEnabled(false);
-          if (timerRef.current) {
-            window.clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
+          window.clearInterval(timerRef.current!);
           return 0;
         }
         return t - 1;
@@ -239,186 +185,72 @@ export default function ClientRound2() {
 
   useEffect(() => {
     if (!isConnected) return;
-
-    const handleTerminateGame = () => {
-      navigate('/play');
-    };
-
-    const handlePlayerPoints = (data: any) => {
-      if (typeof data.points === 'number') {
-        setPlayerPoints(data.points);
-      }
-    };
-
     socket.emit('get-player-points', { targetClientId: socket.id });
-
-    socket.on('terminate-game', handleTerminateGame);
-    socket.on('player-points-update', handlePlayerPoints);
-    socket.on('current-player-points', handlePlayerPoints);
+    socket.on('terminate-game', () => navigate('/play'));
+    socket.on('player-points-update', (d: any) => typeof d.points === 'number' && setPlayerPoints(d.points));
+    socket.on('current-player-points', (d: any) => typeof d.points === 'number' && setPlayerPoints(d.points));
     return () => {
-      socket.off('terminate-game', handleTerminateGame);
-      socket.off('player-points-update', handlePlayerPoints);
-      socket.off('current-player-points', handlePlayerPoints);
+      socket.off('terminate-game');
+      socket.off('player-points-update');
+      socket.off('current-player-points');
     };
   }, [isConnected, navigate]);
 
   const sendAnswer = () => {
     if (!currentRoom || !currentQuestion || !answerText.trim()) return;
-    socket.emit('clue-answer', {
-      hostKey: currentRoom,
-      clueIndex: currentQuestion.clueIndex,
-      answer: answerText.trim(),
-    });
+    socket.emit('clue-answer', { hostKey: currentRoom, clueIndex: currentQuestion.clueIndex, answer: answerText.trim() });
     setLatestSubmittedAnswer(answerText.trim());
     setAnswerText('');
   };
 
   const sendKeyword = () => {
     if (!currentRoom || keywordUsed || keywordWindowClosed || !currentQuestion) return;
-    socket.emit('keyword-answer', {
-      hostKey: currentRoom,
-      answer: 'keyword attempt',
-    });
-    socket.emit('player-attempted-keyword', {
-      hostKey: currentRoom,
-      clueIndex: currentQuestion.clueIndex,
-    });
+    socket.emit('keyword-answer', { hostKey: currentRoom, answer: 'keyword attempt' });
+    socket.emit('player-attempted-keyword', { hostKey: currentRoom, clueIndex: currentQuestion.clueIndex });
     setKeywordUsed(true);
   };
 
-  const handleLeave = () => {
-    disconnectSocket();
-  };
-
-  if (!isConnected || !currentRoom) {
-    return <div style={{ color: '#fff', padding: '20px' }}>Connecting to Round2...</div>;
-  }
+  if (!isConnected || !currentRoom) return <div style={{ color: '#fff', padding: '20px' }}>Connecting to Round2...</div>;
 
   return (
-    <div style={{ padding: '20px', color: '#fff', backgroundColor: '#121212', minHeight: '100vh', fontFamily: 'sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1>Player Round2 Game</h1>
-          <p>Room: <span style={{ color: '#4CAF50', fontFamily: 'monospace' }}>{currentRoom}</span></p>
+    <div style={styles.wrapper}>
+      <GameHeader title="Player Round2 Game" />
+
+      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: '24px' }}>
+        <div style={{ flex: 1, minWidth: '300px' }}>
+          <h2>Clue progress</h2>
+          <ClueProgressGrid progressList={clueProgress} />
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <div style={{ padding: '12px 16px', backgroundColor: '#1a1a1a', borderRadius: '8px', border: '1px solid #333' }}>
-            <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>Your Points</p>
-            <p style={{ margin: '4px 0 0', color: '#4CAF50', fontSize: '1.4rem', fontWeight: 'bold' }}>{playerPoints}</p>
-          </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button onClick={() => navigate('/play')} style={{ backgroundColor: '#555', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-              Back to Client View
-            </button>
-            <button onClick={handleLeave} style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '10px 14px', borderRadius: '4px', cursor: 'pointer' }}>
-              Leave Room
-            </button>
-          </div>
+        <div style={styles.scoreContainer}>
+          <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>Accumulated Score</p>
+          <p style={{ margin: '4px 0 0', color: '#4CAF50', fontSize: '2rem', fontWeight: 'bold', lineHeight: 1 }}>{playerPoints}</p>
         </div>
       </div>
 
-      <hr style={{ borderColor: '#333', margin: '20px 20px 24px' }} />
-
       <section style={{ marginBottom: '24px' }}>
-        <h2>Clue progress</h2>
-        <div style={{ display: 'flex', gap: '16px', marginBottom: '18px', flexDirection: 'column' }}>
-          {clueProgress.map((progress) => {
-            const isSelected = progress.status === 'selected';
-            const isOpened = progress.status === 'opened';
-            const isFailed = progress.status === 'failed';
-            const backgroundColor = isFailed
-              ? '#444'
-              : isSelected || isOpened
-              ? '#1fc7d4'
-              : '#142b52';
-            const textColor = isOpened ? '#fff' : 'transparent';
-
-            return (
-              <div key={progress.clueIndex} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ minWidth: '84px', color: '#ddd', fontSize: '0.94rem' }}>
-                  Clue {progress.clueIndex + 1}
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {Array.from({ length: progress.length }, (_, index) => (
-                    <div
-                      key={index}
-                      style={{
-                        width: '38px',
-                        height: '44px',
-                        borderRadius: '8px',
-                        backgroundColor,
-                        color: textColor,
-                        display: 'flex',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        fontSize: '1rem',
-                        fontWeight: 700,
-                        border: isSelected ? '2px solid #7be4ee' : '1px solid rgba(255,255,255,0.08)',
-                      }}
-                    >
-                      {isOpened ? progress.answer?.charAt(index).toUpperCase() : ''}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
         <h2>{questionLabel}</h2>
-        <div style={{ padding: '18px', backgroundColor: '#181818', border: '1px solid #333', borderRadius: '10px' }}>
-          {currentQuestion ? (
-            <p style={{ margin: 0 }}>{currentQuestion.question}</p>
-          ) : (
-            <p style={{ margin: 0, color: '#888' }}>Waiting for the host to choose a clue.</p>
-          )}
+        <div style={styles.infoBox}>
+          <p style={{ margin: 0 }}>{currentQuestion?.question || 'Waiting for the host to choose a clue.'}</p>
         </div>
       </section>
 
       <section style={{ marginBottom: '24px' }}>
         <h2>Submit your clue answer</h2>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="Type your answer and press Enter"
-            value={answerText}
-            onChange={(e) => setAnswerText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                if (answerEnabled) sendAnswer();
-              }
-            }}
-            disabled={!answerEnabled || keywordUsed}
-            style={{ flex: 1, minWidth: '240px', padding: '12px', borderRadius: '8px', border: '1px solid #333', backgroundColor: '#1e1e1e', color: '#fff' }}
-          />
-          <button onClick={sendAnswer} disabled={!answerEnabled || keywordUsed} style={{ padding: '12px 16px', borderRadius: '8px', backgroundColor: (answerEnabled && !keywordUsed) ? '#4CAF50' : '#555', color: '#fff', border: 'none', cursor: (answerEnabled && !keywordUsed) ? 'pointer' : 'not-allowed' }}>
-            Submit Answer
-          </button>
-        </div>
-        {clueResult && <p style={{ marginTop: '12px', color: '#4CAF50' }}>{clueResult}</p>}
-        {timeLeft !== null && (
-          <p style={{ marginTop: '8px', color: '#ffb703' }}>Time left: {timeLeft}s</p>
-        )}
+        <SubmissionForm value={answerText} onChange={setAnswerText} onSubmit={sendAnswer} disabled={!answerEnabled || keywordUsed} placeholder="Type your answer and press Enter" buttonText="Submit Answer" />
+        {clueResult && <p style={styles.statusLabel}>{clueResult}</p>}
+        {timeLeft !== null && <p style={{ marginTop: '8px', color: '#ffb703' }}>Time left: {timeLeft}s</p>}
         {latestSubmittedAnswer && <p style={{ marginTop: '8px', color: '#ccc' }}>Your latest submission: {latestSubmittedAnswer}</p>}
       </section>
 
       <section style={{ marginBottom: '24px' }}>
         <h2>Submit keyword attempt</h2>
         {!keywordUsed && !keywordWindowClosed ? (
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <button onClick={sendKeyword} style={{ backgroundColor: '#6a1b9a', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '8px', cursor: 'pointer' }}>
-              Attempt Keyword
-            </button>
-          </div>
-        ) : keywordUsed ? (
-          <p style={{ color: '#888' }}>Keyword attempt sent. Waiting for host decision.</p>
+          <button onClick={sendKeyword} style={{ backgroundColor: '#6a1b9a', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>Attempt Keyword</button>
         ) : (
-          <p style={{ color: '#888' }}>The keyword attempt window is closed.</p>
+          <p style={{ color: '#888' }}>{keywordUsed ? 'Keyword attempt sent. Waiting for host decision.' : 'The keyword attempt window is closed.'}</p>
         )}
-        {keywordWindowOpen && keywordTimeLeft !== null && (
-          <p style={{ marginTop: '8px', color: '#ffb703' }}>Keyword time left: {keywordTimeLeft}s</p>
-        )}
-        {keywordResult && <p style={{ marginTop: '12px', color: '#4CAF50' }}>{keywordResult}</p>}
+        {keywordWindowOpen && keywordTimeLeft !== null && <p style={{ marginTop: '8px', color: '#ffb703' }}>Keyword time left: {keywordTimeLeft}s</p>}
+        {keywordResult && <p style={styles.statusLabel}>{keywordResult}</p>}
       </section>
     </div>
   );
