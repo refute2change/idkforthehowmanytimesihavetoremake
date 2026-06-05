@@ -5,12 +5,6 @@ import { useSocket } from '../../../components/SocketContext';
 import { socket } from '../../../socket';
 import { GameHeader } from '../../../components/GameHeader';
 
-const PROTOTYPE_QUESTION_BANK = {
-  40: [{ points: 10, question: "What is the capital city of France?", answer: "Paris" }, { points: 10, question: "How many legs does a spider have?", answer: "8" }, { points: 20, question: "Which planet is known as the 'Red Planet'?", answer: "Mars" }],
-  60: [{ points: 10, question: "What gas do plants absorb from the atmosphere during photosynthesis?", answer: "Carbon Dioxide" }, { points: 20, question: "Who wrote the famous play 'Romeo and Juliet'?", answer: "William Shakespeare" }, { points: 30, question: "What is the chemical symbol for the element Gold?", answer: "Au" }],
-  80: [{ points: 20, question: "What is the rarest naturally occurring element on Earth?", answer: "Astatine" }, { points: 30, question: "Which mathematician is credited with creating the coordinate geometry system?", answer: "René Descartes" }, { points: 30, question: "In what year did the Berlin Wall come down?", answer: "1989" }]
-};
-
 type PackValue = 40 | 60 | 80;
 interface PlayerAnswer { id: string; name: string; answer: string; time: string; }
 interface StealAttempt { id: string; name: string; }
@@ -42,6 +36,7 @@ export default function HostRound4() {
   const [currentStealAttempt, setCurrentStealAttempt] = useState<StealAttempt | null>(null);
   const [playerPoints, setPlayerPoints] = useState<{ [playerId: string]: number }>({});
   const [manualPoints, setManualPoints] = useState<{ [playerId: string]: string }>({});
+  const [round4QuestionPack, setRound4QuestionPack] = useState<QuestionPack | null>(null);
   
   const mainTimerRef = useRef<number | null>(null);
   const stealTimerRef = useRef<number | null>(null);
@@ -79,7 +74,10 @@ export default function HostRound4() {
   };
 
   const areAllPlayersFinished = useMemo(() => connectedClients.length > 0 && connectedClients.every(c => completedPlayerIds[c.id] === true), [connectedClients, completedPlayerIds]);
-  const currentSubQuestionPoints = useMemo(() => (selectedPack !== null && currentSubQuestionIndex !== null) ? PROTOTYPE_QUESTION_BANK[selectedPack][currentSubQuestionIndex].points : 0, [selectedPack, currentSubQuestionIndex]);
+  const currentSubQuestionPoints = useMemo(() => {
+    if (selectedPack === null || currentSubQuestionIndex === null || !round4QuestionPack) return 0;
+    return round4QuestionPack[selectedPack]?.[currentSubQuestionIndex]?.points ?? 0;
+  }, [selectedPack, currentSubQuestionIndex, round4QuestionPack]);
   const dynamicDuration = useMemo(() => currentSubQuestionPoints === 10 ? 10 : currentSubQuestionPoints === 20 ? 15 : 20, [currentSubQuestionPoints]);
 
   useEffect(() => {
@@ -89,20 +87,33 @@ export default function HostRound4() {
   useEffect(() => {
     if (!isConnected) return;
 
+    const handleQuestionPack = (data: { questionPack: QuestionPack }) => {
+      if (!data || !data.questionPack) return;
+      setRound4QuestionPack(data.questionPack);
+    };
+
     socket.on('round4-answer', (d) => setPlayerAnswers((prev) => [{ id: d.senderId, name: d.senderName || `Player ${d.senderId.slice(0, 6)}`, answer: d.answer, time: new Date().toLocaleTimeString() }, ...prev]));
     socket.on('round4-steal-first', (d) => setCurrentStealAttempt((current) => { if (current !== null) return current; if (stealTimerRef.current) { window.clearInterval(stealTimerRef.current); stealTimerRef.current = null; } socket.emit('round4-steal-first', { hostKey: currentRoom, playerId: d.playerId, playerName: d.playerName }); return { id: d.playerId, name: d.playerName }; }));
     socket.on('player-points-response', (d) => d.playerId && setPlayerPoints((prev) => ({ ...prev, [d.playerId]: d.points })));
     socket.on('player-points-awarded', (d) => d.playerId && setPlayerPoints((prev) => ({ ...prev, [d.playerId]: d.points })));
     socket.on('client-roster-request', () => connectedClients.forEach((c) => socket.emit('request-player-points', { hostKey: currentRoom, targetClientId: c.id })));
+    socket.on('question-pack', handleQuestionPack);
 
     return () => {
-      socket.off('round4-answer'); socket.off('round4-steal-first'); socket.off('player-points-response'); socket.off('player-points-awarded'); socket.off('client-roster-request');
+      socket.off('round4-answer'); socket.off('round4-steal-first'); socket.off('player-points-response'); socket.off('player-points-awarded'); socket.off('client-roster-request'); socket.off('question-pack', handleQuestionPack);
     };
   }, [isConnected, currentRoom, connectedClients]);
 
   useEffect(() => {
     if (isConnected && currentRoom) connectedClients.forEach((c) => socket.emit('request-player-points', { hostKey: currentRoom, targetClientId: c.id }));
   }, [isConnected, connectedClients, currentRoom]);
+
+  useEffect(() => {
+    if (!isConnected || !currentRoom) return;
+    socket.emit('request-question-pack', { hostKey: currentRoom });
+  }, [isConnected, currentRoom]);
+
+  
 
   const selectActivePlayerTurn = (playerId: string) => {
     if (completedPlayerIds[playerId] || turnStaged) return;
@@ -133,8 +144,9 @@ export default function HostRound4() {
   };
 
   const selectSubQuestion = (index: number) => {
-    if (selectedPack === null || !activePlayerId || questionSelected) return;
-    const target = PROTOTYPE_QUESTION_BANK[selectedPack][index];
+    if (selectedPack === null || !activePlayerId || questionSelected || !round4QuestionPack) return;
+    const target = round4QuestionPack[selectedPack]?.[index];
+    if (!target) return;
     setCurrentSubQuestionIndex(index); setQuestionPrompt(target.question); setQuestionSelected(true);
     setTimerRunning(false); setPlayerAnswers([]); setCurrentStealAttempt(null); setStealWindowOpen(false);
     setUsedSubQuestions(prev => ({ ...prev, [index]: true }));
@@ -248,9 +260,10 @@ return (
           {turnStaged && (
             <section style={styles.card}>
               <h2>Step 2: Choose Point Pack</h2>
+              {!round4QuestionPack ? <p style={{ color: '#ccc' }}>Loading question pack from server...</p> : null}
               <div style={{ display: 'flex', gap: '12px' }}>
                 {([40, 60, 80] as PackValue[]).map((pack) => (
-                  <button key={pack} disabled={questionSelected || turnFullyFinished} onClick={() => selectPack(pack)} style={styles.choosePack(selectedPack === pack)}>
+                  <button key={pack} disabled={!round4QuestionPack || questionSelected || turnFullyFinished} onClick={() => selectPack(pack)} style={styles.choosePack(selectedPack === pack)}>
                     {pack} pts
                   </button>
                 ))}
@@ -269,9 +282,10 @@ return (
                   let nextSequentialIndex = 0;
                   if (usedSubQuestions[0]) nextSequentialIndex = 1;
                   if (usedSubQuestions[1]) nextSequentialIndex = 2;
-                  const targetQuestionData = PROTOTYPE_QUESTION_BANK[selectedPack][nextSequentialIndex];
+                  const targetQuestionData = selectedPack !== null && round4QuestionPack ? round4QuestionPack[selectedPack]?.[nextSequentialIndex] : undefined;
                   const isStagedOrRunning = questionSelected === true;
                   if (turnFullyFinished) return <p style={{ margin: 0, color: '#666', textAlign: 'center', fontStyle: 'italic' }}>All 3 questions completed.</p>;
+                  if (!targetQuestionData) return <p style={{ margin: 0, color: '#ccc', textAlign: 'center' }}>Question data unavailable. Refresh or re-request the pack.</p>;
                   return <button disabled={isStagedOrRunning} onClick={() => selectSubQuestion(nextSequentialIndex)} style={styles.nextQuestionButton(isStagedOrRunning)}>{isStagedOrRunning ? `⏳ Evaluation Active (Q${nextSequentialIndex + 1})` : `🚀 Spawn Next Question (Q${nextSequentialIndex + 1} — ${targetQuestionData.points} pts)`}</button>;
                 })()}
               </div>
