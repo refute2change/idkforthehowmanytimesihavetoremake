@@ -6,14 +6,16 @@ import { socket } from '../../../socket';
 import { GameHeader } from '../../../components/GameHeader';
 
 const PROTOTYPE_QUESTION_BANK = {
-  40: [{ points: 10, question: "What is the capital city of France?" }, { points: 10, question: "How many legs does a spider have?" }, { points: 20, question: "Which planet is known as the 'Red Planet'?" }],
-  60: [{ points: 10, question: "What gas do plants absorb from the atmosphere during photosynthesis?" }, { points: 20, question: "Who wrote the famous play 'Romeo and Juliet'?" }, { points: 30, question: "What is the chemical symbol for the element Gold?" }],
-  80: [{ points: 20, question: "What is the rarest naturally occurring element on Earth?" }, { points: 30, question: "Which mathematician is credited with creating the coordinate geometry system?" }, { points: 30, question: "In what year did the Berlin Wall come down?" }]
+  40: [{ points: 10, question: "What is the capital city of France?", answer: "Paris" }, { points: 10, question: "How many legs does a spider have?", answer: "8" }, { points: 20, question: "Which planet is known as the 'Red Planet'?", answer: "Mars" }],
+  60: [{ points: 10, question: "What gas do plants absorb from the atmosphere during photosynthesis?", answer: "Carbon Dioxide" }, { points: 20, question: "Who wrote the famous play 'Romeo and Juliet'?", answer: "William Shakespeare" }, { points: 30, question: "What is the chemical symbol for the element Gold?", answer: "Au" }],
+  80: [{ points: 20, question: "What is the rarest naturally occurring element on Earth?", answer: "Astatine" }, { points: 30, question: "Which mathematician is credited with creating the coordinate geometry system?", answer: "René Descartes" }, { points: 30, question: "In what year did the Berlin Wall come down?", answer: "1989" }]
 };
 
 type PackValue = 40 | 60 | 80;
 interface PlayerAnswer { id: string; name: string; answer: string; time: string; }
 interface StealAttempt { id: string; name: string; }
+interface QuestionData { points: number; question: string; answer: string }
+interface QuestionPack { [packValue: number]: QuestionData[] }
 
 export default function HostRound4() {
   const { isConnected, currentRoom, connectedClients } = useSocket();

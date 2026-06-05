@@ -93,7 +93,7 @@ export default function ClientRound4() {
       if (!data) return;
       if (data.question === 'pack-chosen') {
         setChosenPackBlock(data.clueIndex);
-        setTimeout(() => { setTurnStaged(false); setShowMainUI(true); }, 3000);
+        setTimeout(() => { setTurnStaged(false); setShowMainUI(true); }, 1500);
         return;
       }
       if (data.question === 'star-hope-activated') {
@@ -174,6 +174,41 @@ export default function ClientRound4() {
       socket.off('room-leaderboard-snapshot'); socket.off('round4-turn-over'); socket.off('terminate-game'); socket.off('host-offline-evict');
     };
   }, [isConnected, currentRoom, navigate, stagedActiveId, round4State, showMainUI, starOfHopePreActivated]);
+
+  useEffect(() => {
+    const buzzerSound = new Audio('/sounds/Round4/buzzer.mp3'); // Ensure this file exists in your public folder
+    const tenSec = new Audio('/sounds/Round4/10_second.ogg');
+    const fifteenSec = new Audio('/sounds/Round4/15_second.ogg');
+    const twentySec = new Audio('/sounds/Round4/20_second.ogg');
+    const stealTimerSound = new Audio('/sounds/Round4/steal_window.mpeg');
+    const selectPackSound = new Audio('/sounds/Round4/select_pack.mp3');
+    const correct = new Audio('/sounds/Round4/correct.ogg');
+    const wrong = new Audio('/sounds/Round4/wrong.ogg');
+
+    const handlePlaySound = (data: { effect: string }) => {
+      console.log(data.effect);
+      if (data.effect === 'steal-buzzer') {
+          // The promise returned by play() will reject if the browser blocks it
+          buzzerSound.play().catch(err => {
+            console.warn("Audio blocked by browser, waiting for interaction:", err);
+          });
+        }
+      else if (data.effect === '10-second') tenSec.play().catch(() => {});
+      else if (data.effect === '15-second') fifteenSec.play().catch(() => {});
+      else if (data.effect === '20-second') twentySec.play().catch(() => {});
+      else if (data.effect === 'steal-timer') stealTimerSound.play().catch(() => {});
+      else if (data.effect === 'select-pack') selectPackSound.play().catch(() => {});
+      else if (data.effect === 'correct') correct.play().catch(() => {});
+      else if (data.effect === 'wrong') wrong.play().catch(() => {});
+        else console.log("Unknown sound effect requested:", data.effect);
+      };
+
+    socket.on('play-sound-effect', handlePlaySound);
+
+    return () => {
+      socket.off('play-sound-effect', handlePlaySound);
+    };
+  }, []);
 
   useEffect(() => {
     if (!answerWindowEnabled || clientTimeLeft === null || clientTimeLeft <= 0) return;
